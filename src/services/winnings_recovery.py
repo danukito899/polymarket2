@@ -156,7 +156,7 @@ async def winnings_recovery_loop() -> None:
         warning('Winnings recovery disabled: PRIVATE_KEY not set')
         return
 
-    interval_seconds = float(os.getenv('WINNINGS_RECOVERY_INTERVAL_SECONDS', str(DEFAULT_INTERVAL_SECONDS)))
+    interval_seconds = int(os.getenv('WINNINGS_RECOVERY_INTERVAL_SECONDS', str(DEFAULT_INTERVAL_SECONDS)))
     ctf_contract_address = os.getenv('CTF_EXCHANGE_CONTRACT_ADDRESS', DEFAULT_CTF_CONTRACT_ADDRESS)
     chain_id = int(os.getenv('CHAIN_ID', str(DEFAULT_CHAIN_ID)))
 
