@@ -21,6 +21,7 @@ PROXY_WALLET = ENV.PROXY_WALLET
 TRADE_AGGREGATION_ENABLED = ENV.TRADE_AGGREGATION_ENABLED
 TRADE_AGGREGATION_WINDOW_SECONDS = ENV.TRADE_AGGREGATION_WINDOW_SECONDS
 TRADE_AGGREGATION_MIN_TOTAL_USD = 1.0  # Polymarket minimum
+FETCH_INTERVAL = ENV.FETCH_INTERVAL
 
 is_running = True
 
@@ -327,7 +328,7 @@ async def trade_executor(clob_client: Any) -> None:
             
             # Update waiting message
             if not trades and not ready_aggregations:
-                if time.time() - last_check > 0.3:
+                if time.time() - last_check > FETCH_INTERVAL:
                     buffered_count = len(trade_aggregation_buffer)
                     if buffered_count > 0:
                         waiting(len(USER_ADDRESSES), f'{buffered_count} trade group(s) pending')
@@ -342,14 +343,14 @@ async def trade_executor(clob_client: Any) -> None:
                 await do_trading(clob_client, trades)
                 last_check = time.time()
             else:
-                # Update waiting message every 300ms for smooth animation
-                if time.time() - last_check > 0.3:
+                # Update waiting message on configured fetch interval
+                if time.time() - last_check > FETCH_INTERVAL:
                     waiting(len(USER_ADDRESSES))
                     last_check = time.time()
         
         if not is_running:
             break
         
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(FETCH_INTERVAL)
     
     info('Trade executor stopped')

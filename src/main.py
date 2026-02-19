@@ -10,6 +10,7 @@ from src.config.env import ENV
 from src.utils.create_clob_client import create_clob_client
 from src.services.trade_executor import trade_executor, stop_trade_executor
 from src.services.trade_monitor import trade_monitor, stop_trade_monitor
+from src.services.winnings_recovery import winnings_recovery_loop, stop_winnings_recovery
 from src.utils.logger import startup, info, success, warning, error, separator
 from src.utils.system_status import check_system_status, display_system_status
 
@@ -41,6 +42,7 @@ async def graceful_shutdown():
         # Stop services
         stop_trade_monitor()
         stop_trade_executor()
+        stop_winnings_recovery()
         
         # Give services time to finish current operations
         info('Waiting for services to finish current operations...')
@@ -95,6 +97,9 @@ async def main():
         info('Starting trade executor...')
         # Start trade executor in background
         executor_task = asyncio.create_task(trade_executor(clob_client))
+
+        info('Starting winnings recovery...')
+        recovery_task = asyncio.create_task(winnings_recovery_loop())
         
         # Wait for shutdown event
         await shutdown_event.wait()
@@ -103,7 +108,8 @@ async def main():
         if shutdown_event.is_set():
             monitor_task.cancel()
             executor_task.cancel()
-            await asyncio.gather(monitor_task, executor_task, return_exceptions=True)  # Wait for tasks to finish cancelling
+            recovery_task.cancel()
+            await asyncio.gather(monitor_task, executor_task, recovery_task, return_exceptions=True)  # Wait for tasks to finish cancelling
             await graceful_shutdown()
         
     except KeyboardInterrupt:
@@ -118,4 +124,3 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         pass  # Signal handler will handle shutdown
-

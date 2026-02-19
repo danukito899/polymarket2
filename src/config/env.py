@@ -66,9 +66,9 @@ def validate_addresses() -> None:
 
 def validate_numeric_config() -> None:
     """Validate numeric configuration values"""
-    fetch_interval = int(os.getenv('FETCH_INTERVAL', '1'))
+    fetch_interval = float(os.getenv('FETCH_INTERVAL', '1'))
     if fetch_interval <= 0:
-        raise ValueError(f'Invalid FETCH_INTERVAL: {os.getenv("FETCH_INTERVAL")}. Must be a positive integer.')
+        raise ValueError(f'Invalid FETCH_INTERVAL: {os.getenv("FETCH_INTERVAL")}. Must be a positive number.')
 
     retry_limit = int(os.getenv('RETRY_LIMIT', '3'))
     if retry_limit < 1 or retry_limit > 10:
@@ -268,7 +268,7 @@ class ENV:
     PRIVATE_KEY: str = os.getenv('PRIVATE_KEY', '')
     CLOB_HTTP_URL: str = os.getenv('CLOB_HTTP_URL', '')
     CLOB_WS_URL: str = os.getenv('CLOB_WS_URL', '')
-    FETCH_INTERVAL: int = int(os.getenv('FETCH_INTERVAL', '1'))
+    FETCH_INTERVAL: float = float(os.getenv('FETCH_INTERVAL', '1'))
     TOO_OLD_TIMESTAMP: int = int(os.getenv('TOO_OLD_TIMESTAMP', '24'))
     RETRY_LIMIT: int = int(os.getenv('RETRY_LIMIT', '3'))
     # Legacy parameters (kept for backward compatibility)
