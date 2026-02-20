@@ -214,17 +214,15 @@ async def winnings_recovery_loop() -> None:
         cycle_start = asyncio.get_running_loop().time()
 
         try:
-            has_gas = await asyncio.to_thread(_has_min_native_balance, web3, tx_wallet)
-            if has_gas:
-                await _recover_winnings_once(
-                    web3,
-                    contract,
-                    positions_wallet,
-                    tx_wallet,
-                    ENV.PRIVATE_KEY,
-                    chain_id,
-                    attempted_in_runtime,
-                )
+            await _recover_winnings_once(
+                web3,
+                contract,
+                positions_wallet,
+                tx_wallet,
+                ENV.PRIVATE_KEY,
+                chain_id,
+                attempted_in_runtime,
+            )
         except Exception as exc:
             error(f'Winnings recovery loop error: {exc}')
 
