@@ -248,22 +248,30 @@ async def create_clob_client() -> ClobClient:
     # Create wallet from private key
     account = Account.from_key(ENV.PRIVATE_KEY)
     
-    # Detect if the proxy wallet is a Gnosis Safe or EOA
-    is_proxy_safe = await is_gnosis_safe(ENV.PROXY_WALLET)
-    signature_type = 'POLY_GNOSIS_SAFE' if is_proxy_safe else 'EOA'
-    
+    # Signature type: 0 = EOA MetaMask/funder mode, non-zero = legacy proxy/safe mode.
+    use_eoa_mode = ENV.CLOB_SIGNATURE_TYPE == 0
+    is_proxy_safe = False
+    if not use_eoa_mode and ENV.PROXY_WALLET:
+        is_proxy_safe = await is_gnosis_safe(ENV.PROXY_WALLET)
+
+    signature_type = 'EOA' if use_eoa_mode or not is_proxy_safe else 'POLY_GNOSIS_SAFE'
+    active_proxy_wallet = ENV.PROXY_WALLET if signature_type == 'POLY_GNOSIS_SAFE' else None
+
     info(
-        f'Wallet type detected: {"Gnosis Safe" if is_proxy_safe else "EOA (Externally Owned Account)"}'
+        f'Wallet type detected: {"Gnosis Safe" if signature_type == "POLY_GNOSIS_SAFE" else "EOA (Externally Owned Account)"}'
     )
-    trace(f'Using CLOB host={host}, chain_id={chain_id}, proxy_wallet={ENV.PROXY_WALLET}')
-    
+    trace(
+        f'Using CLOB host={host}, chain_id={chain_id}, trading_wallet={ENV.TRADING_WALLET_ADDRESS}, '
+        f'proxy_wallet={active_proxy_wallet}, signature_type={ENV.CLOB_SIGNATURE_TYPE}'
+    )
+
     # Create initial client
     clob_client = ClobClient(
         host=host,
         chain_id=chain_id,
         wallet=account,
         signature_type=signature_type,
-        proxy_wallet=ENV.PROXY_WALLET if is_proxy_safe else None
+        proxy_wallet=active_proxy_wallet
     )
     
     # Try to create or derive API key
@@ -282,7 +290,7 @@ async def create_clob_client() -> ClobClient:
         wallet=account,
         api_creds=creds,
         signature_type=signature_type,
-        proxy_wallet=ENV.PROXY_WALLET if is_proxy_safe else None
+        proxy_wallet=active_proxy_wallet
     )
 
     if creds:
