@@ -304,13 +304,10 @@ class ClobClient:
                 signed_dict = _to_plain_dict(signed)
                 return signed if isinstance(signed, dict) else signed_dict
             except Exception as typed_error:
-                create_market_order_errors = (
+                raise RuntimeError(
+                    f'Failed to create market order with SDK create_market_order: '
                     f'dict_error={dict_error!r}; typed_error={typed_error}'
-                )
-                trace(
-                    'create_market_order() unavailable for current payload; '
-                    f'falling back to create_order. Details: {create_market_order_errors}'
-                )
+                ) from typed_error
 
         # Fallback to create_order using typed order args from py_clob_client.
         try:
