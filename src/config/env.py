@@ -86,6 +86,12 @@ def validate_numeric_config() -> None:
     if network_retry_limit < 1 or network_retry_limit > 10:
         raise ValueError(f'Invalid NETWORK_RETRY_LIMIT: {os.getenv("NETWORK_RETRY_LIMIT")}. Must be between 1 and 10.')
 
+    market_fallback_diff = float(os.getenv('MARKET_FALLBACK_MAX_DIFF', '0.02'))
+    if market_fallback_diff < 0 or market_fallback_diff > 1:
+        raise ValueError(
+            f'Invalid MARKET_FALLBACK_MAX_DIFF: {os.getenv("MARKET_FALLBACK_MAX_DIFF")}. Must be between 0 and 1.'
+        )
+
 
 def validate_urls() -> None:
     """Validate URL formats"""
@@ -283,6 +289,7 @@ class ENV:
     # Trade aggregation settings
     TRADE_AGGREGATION_ENABLED: bool = os.getenv('TRADE_AGGREGATION_ENABLED', '').lower() == 'true'
     TRADE_AGGREGATION_WINDOW_SECONDS: int = int(os.getenv('TRADE_AGGREGATION_WINDOW_SECONDS', '300'))  # 5 minutes default
+    MARKET_FALLBACK_MAX_DIFF: float = float(os.getenv('MARKET_FALLBACK_MAX_DIFF', '0.02'))
     MONGO_URI: str = os.getenv('MONGO_URI', '')
     RPC_URL: str = os.getenv('RPC_URL', '')
     USDC_CONTRACT_ADDRESS: str = os.getenv('USDC_CONTRACT_ADDRESS', '')
