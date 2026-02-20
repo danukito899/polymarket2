@@ -3,6 +3,7 @@ Post order to Polymarket
 """
 import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))); import src.lib_core
 from typing import Optional, Dict, Any, List, Tuple
+import math
 from ..config.env import ENV
 from ..models.user_history import get_user_activity_collection
 from ..utils.logger import info, warning, order_result
@@ -14,7 +15,25 @@ COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG
 # Polymarket minimum order sizes
 MIN_ORDER_SIZE_USD = 1.0  # Minimum order size in USD for BUY orders
 MIN_ORDER_SIZE_TOKENS = 1.0  # Minimum order size in tokens for SELL/MERGE orders
+MAX_MARKET_FALLBACK_DIFF = ENV.MARKET_FALLBACK_MAX_DIFF
+MAX_ORDER_PRICE_DECIMALS = 2
+MAX_ORDER_SIZE_DECIMALS = 1
 
+
+
+
+def _round_to_decimals(value: float, decimals: int) -> float:
+    """Truncate numeric value to a maximum number of decimal places."""
+    factor = 10 ** decimals
+    return math.floor(float(value) * factor) / factor
+
+
+def normalize_order_args(order_args: Dict[str, Any]) -> Dict[str, Any]:
+    """Clamp order price/amount precision for exchange compatibility."""
+    normalized = dict(order_args)
+    normalized['price'] = _round_to_decimals(order_args.get('price', 0), MAX_ORDER_PRICE_DECIMALS)
+    normalized['amount'] = _round_to_decimals(order_args.get('amount', 0), MAX_ORDER_SIZE_DECIMALS)
+    return normalized
 
 def extract_order_error(response: Any) -> Optional[str]:
     """Extract error message from order response"""
@@ -56,6 +75,67 @@ def is_insufficient_balance_or_allowance_error(message: Optional[str]) -> bool:
 def is_not_found_error(err: Exception) -> bool:
     """Check if exception indicates HTTP 404 from order book endpoint."""
     return '404' in str(err) and 'book?token_id=' in str(err)
+
+
+def is_price_within_tolerance(reference_price: float, market_price: float, side: str) -> bool:
+    """Only fallback to market if slippage is within configured tolerance."""
+    if reference_price <= 0 or market_price <= 0:
+        return False
+
+    normalized_side = side.upper()
+    if normalized_side == 'BUY':
+        # For buys, higher price is worse. Better prices are always acceptable.
+        return market_price <= reference_price * (1 + MAX_MARKET_FALLBACK_DIFF)
+
+    # For sells, lower price is worse. Better prices are always acceptable.
+    return market_price >= reference_price * (1 - MAX_MARKET_FALLBACK_DIFF)
+
+
+async def submit_with_fok_then_market(
+    clob_client: Any,
+    execution_asset: str,
+    order_args: Dict[str, Any],
+    side: str,
+) -> Dict[str, Any]:
+    """Submit as FOK first, then fallback to market-style GTC if within 2%."""
+    normalized_order_args = normalize_order_args(order_args)
+    info(f'[ORDER TRACE] Creating signed order payload: {normalized_order_args}')
+    signed_order = await clob_client.create_market_order(normalized_order_args)
+    info('[ORDER TRACE] Submitting order to CLOB with type=FOK')
+    resp = await clob_client.post_order(signed_order, 'FOK')
+    info(f'[ORDER TRACE] CLOB response: {resp}')
+
+    if resp.get('success') is True:
+        return resp
+
+    error_message = extract_order_error(resp)
+    warning(f'FOK order failed{f": {error_message}" if error_message else ""}. Checking market fallback...')
+
+    order_book = await clob_client.get_order_book(execution_asset)
+    book_side = 'asks' if side.upper() == 'BUY' else 'bids'
+    levels = order_book.get(book_side) or []
+    if not levels:
+        warning('No liquidity available for market fallback')
+        return resp
+
+    best_level = min(levels, key=lambda x: float(x['price'])) if side.upper() == 'BUY' else max(levels, key=lambda x: float(x['price']))
+    market_price = float(best_level['price'])
+    reference_price = float(normalized_order_args.get('price', 0))
+
+    if not is_price_within_tolerance(reference_price, market_price, side):
+        warning(
+            f'Market fallback skipped: price deviation exceeds {MAX_MARKET_FALLBACK_DIFF * 100:.0f}% '
+            f'(target={reference_price:.4f}, market={market_price:.4f})'
+        )
+        return resp
+
+    fallback_order_args = normalize_order_args({**normalized_order_args, 'price': market_price})
+    info(f'[ORDER TRACE] Market fallback order payload: {fallback_order_args}')
+    fallback_signed_order = await clob_client.create_market_order(fallback_order_args)
+    info('[ORDER TRACE] Submitting fallback order to CLOB with type=GTC')
+    fallback_resp = await clob_client.post_order(fallback_signed_order, 'GTC')
+    info(f'[ORDER TRACE] Fallback CLOB response: {fallback_resp}')
+    return fallback_resp
 
 
 async def post_order(
@@ -133,22 +213,28 @@ async def post_order(
                     order_args = {
                         'side': 'SELL',
                         'tokenID': execution_asset,
-                        'amount': remaining,
-                        'price': float(max_price_bid['price']),
+                        'amount': _round_to_decimals(remaining, MAX_ORDER_SIZE_DECIMALS),
+                        'price': _round_to_decimals(float(max_price_bid['price']), MAX_ORDER_PRICE_DECIMALS),
                     }
                 else:
                     order_args = {
                         'side': 'SELL',
                         'tokenID': execution_asset,
-                        'amount': float(max_price_bid['size']),
-                        'price': float(max_price_bid['price']),
+                        'amount': _round_to_decimals(float(max_price_bid['size']), MAX_ORDER_SIZE_DECIMALS),
+                        'price': _round_to_decimals(float(max_price_bid['price']), MAX_ORDER_PRICE_DECIMALS),
                     }
+
+                if order_args['amount'] <= 0:
+                    warning('Order amount rounded to 0.0 after precision clamp - skipping')
+                    collection.update_one({'_id': trade['_id']}, {'$set': {'bot': True}})
+                    break
                 
-                info(f'[ORDER TRACE] Creating signed order payload: {order_args}')
-                signed_order = await clob_client.create_market_order(order_args)
-                info('[ORDER TRACE] Submitting order to CLOB with type=FOK')
-                resp = await clob_client.post_order(signed_order, 'FOK')
-                info(f'[ORDER TRACE] CLOB response: {resp}')
+                resp = await submit_with_fok_then_market(
+                    clob_client=clob_client,
+                    execution_asset=execution_asset,
+                    order_args=order_args,
+                    side='SELL',
+                )
                 
                 if resp.get('success') is True:
                     retry = 0
@@ -257,26 +343,39 @@ async def post_order(
                     )
                     break
                 
-                # Check if balance is sufficient for the order
-                if available_balance < order_size:
-                    warning(f'Insufficient balance: Need ${order_size:.2f} but only have ${available_balance:.2f}')
-                    abort_due_to_funds = True
-                    break
-                
                 order_args = {
                     'side': 'BUY',
                     'tokenID': execution_asset,
-                    'amount': order_size,
-                    'price': float(min_price_ask['price']),
+                    'amount': _round_to_decimals(order_size, MAX_ORDER_SIZE_DECIMALS),
+                    'price': _round_to_decimals(float(min_price_ask['price']), MAX_ORDER_PRICE_DECIMALS),
                 }
+
+                if order_args['amount'] < MIN_ORDER_SIZE_USD:
+                    info(
+                        f'Rounded order size (${order_args["amount"]:.2f}) below minimum (${MIN_ORDER_SIZE_USD}) - completing trade'
+                    )
+                    collection.update_one(
+                        {'_id': trade['_id']},
+                        {'$set': {'bot': True, 'myBoughtSize': total_bought_tokens}}
+                    )
+                    break
+
+                # Check if balance is sufficient for the rounded order
+                if available_balance < order_args['amount']:
+                    warning(
+                        f'Insufficient balance: Need ${order_args["amount"]:.2f} but only have ${available_balance:.2f}'
+                    )
+                    abort_due_to_funds = True
+                    break
                 
-                info(f'Creating order: ${order_size:.2f} @ ${min_price_ask["price"]} (Balance: ${available_balance:.2f})')
+                info(f'Creating order: ${order_args["amount"]:.2f} @ ${order_args["price"]} (Balance: ${available_balance:.2f})')
                 
-                info(f'[ORDER TRACE] Creating signed order payload: {order_args}')
-                signed_order = await clob_client.create_market_order(order_args)
-                info('[ORDER TRACE] Submitting order to CLOB with type=FOK')
-                resp = await clob_client.post_order(signed_order, 'FOK')
-                info(f'[ORDER TRACE] CLOB response: {resp}')
+                resp = await submit_with_fok_then_market(
+                    clob_client=clob_client,
+                    execution_asset=execution_asset,
+                    order_args=order_args,
+                    side='BUY',
+                )
                 
                 if resp.get('success') is True:
                     retry = 0

@@ -27,6 +27,8 @@ ws: Optional[Any] = None
 reconnect_attempts = 0
 MAX_RECONNECT_ATTEMPTS = 10
 RECONNECT_DELAY = 5  # 5 seconds
+WS_ROTATION_SECONDS = 300  # Restart WebSocket every 5 minutes to avoid stale streams
+TRADE_BACKFILL_LIMIT = 200
 is_running = True
 position_update_task: Optional[asyncio.Task] = None
 is_first_run = True
@@ -45,11 +47,11 @@ async def init():
     
     # Show your own positions first
     try:
-        my_positions_url = f'https://data-api.polymarket.com/positions?user={ENV.PROXY_WALLET}'
+        my_positions_url = f'https://data-api.polymarket.com/positions?user={ENV.TRADING_WALLET_ADDRESS}'
         my_positions_data = await fetch_data_async(my_positions_url)
         
         # Get current USDC balance
-        current_balance = get_my_balance(ENV.PROXY_WALLET)
+        current_balance = get_my_balance(ENV.TRADING_WALLET_ADDRESS)
         
         if isinstance(my_positions_data, list) and len(my_positions_data) > 0:
             # Calculate your overall profitability and initial investment
@@ -67,7 +69,7 @@ async def init():
             
             clear_line()
             my_positions(
-                ENV.PROXY_WALLET,
+                ENV.TRADING_WALLET_ADDRESS,
                 len(my_positions_data),
                 my_top_positions,
                 my_overall_pnl,
@@ -77,7 +79,7 @@ async def init():
             )
         else:
             clear_line()
-            my_positions(ENV.PROXY_WALLET, 0, [], 0, 0, 0, current_balance)
+            my_positions(ENV.TRADING_WALLET_ADDRESS, 0, [], 0, 0, 0, current_balance)
     except Exception as e:
         error(f'Failed to fetch your positions: {e}')
     
@@ -234,6 +236,27 @@ async def update_positions():
             error(f'Error updating positions for {address[:6]}...{address[-4:]}: {e}')
 
 
+async def backfill_recent_trades() -> None:
+    """Fast HTTP backfill to avoid missing trades during reconnect windows."""
+    for address in USER_ADDRESSES:
+        try:
+            backfill_url = (
+                f'https://data-api.polymarket.com/activity?user={address}&type=TRADE&limit={TRADE_BACKFILL_LIMIT}'
+            )
+            activities = await fetch_data_async(backfill_url)
+            if not isinstance(activities, list):
+                continue
+
+            # Process oldest -> newest for deterministic replay
+            for activity in reversed(activities):
+                proxy_wallet = str(activity.get('proxyWallet', '')).lower()
+                if proxy_wallet != address.lower():
+                    continue
+                await process_trade_activity(activity, address.lower())
+        except Exception as e:
+            error(f'HTTP backfill failed for {address[:6]}...{address[-4:]}: {e}')
+
+
 async def connect_rtds():
     """Connect to RTDS WebSocket and subscribe to trader activities"""
     global ws, reconnect_attempts
@@ -264,10 +287,16 @@ async def connect_rtds():
         await ws.send(json.dumps(subscribe_message))
         success(f'Subscribed to RTDS for {len(USER_ADDRESSES)} trader(s) - monitoring in real-time')
         
+        rotation_timer = asyncio.create_task(asyncio.sleep(WS_ROTATION_SECONDS))
+
         # Listen for messages
         async for message in ws:
             if not is_running:
                 break
+
+            if rotation_timer.done():
+                info('Restarting RTDS WebSocket after 5 minutes to avoid stale stream')
+                raise RuntimeError('RTDS rotation interval reached')
             
             try:
                 if not message or not str(message).strip():
@@ -308,6 +337,9 @@ async def connect_rtds():
         if ws:
             await ws.close()
         raise
+    finally:
+        if 'rotation_timer' in locals():
+            rotation_timer.cancel()
 
 
 async def reconnect_loop():
@@ -316,9 +348,12 @@ async def reconnect_loop():
     
     while is_running and reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
         try:
+            await backfill_recent_trades()
             await connect_rtds()
-            # If connection successful, break out of loop
-            break
+            # Connection ended gracefully; loop to reconnect and continue monitoring.
+            reconnect_attempts = 0
+            if is_running:
+                info('RTDS connection ended. Reconnecting...')
         except Exception as e:
             reconnect_attempts += 1
             if reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
@@ -391,4 +426,3 @@ async def trade_monitor():
         raise
     
     info('Trade monitor stopped')
-
