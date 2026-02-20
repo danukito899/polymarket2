@@ -14,6 +14,7 @@ COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG
 # Polymarket minimum order sizes
 MIN_ORDER_SIZE_USD = 1.0  # Minimum order size in USD for BUY orders
 MIN_ORDER_SIZE_TOKENS = 1.0  # Minimum order size in tokens for SELL/MERGE orders
+MAX_MARKET_FALLBACK_DIFF = ENV.MARKET_FALLBACK_MAX_DIFF
 
 
 def extract_order_error(response: Any) -> Optional[str]:
@@ -56,6 +57,66 @@ def is_insufficient_balance_or_allowance_error(message: Optional[str]) -> bool:
 def is_not_found_error(err: Exception) -> bool:
     """Check if exception indicates HTTP 404 from order book endpoint."""
     return '404' in str(err) and 'book?token_id=' in str(err)
+
+
+def is_price_within_tolerance(reference_price: float, market_price: float, side: str) -> bool:
+    """Only fallback to market if slippage is within configured tolerance."""
+    if reference_price <= 0 or market_price <= 0:
+        return False
+
+    normalized_side = side.upper()
+    if normalized_side == 'BUY':
+        # For buys, higher price is worse. Better prices are always acceptable.
+        return market_price <= reference_price * (1 + MAX_MARKET_FALLBACK_DIFF)
+
+    # For sells, lower price is worse. Better prices are always acceptable.
+    return market_price >= reference_price * (1 - MAX_MARKET_FALLBACK_DIFF)
+
+
+async def submit_with_fok_then_market(
+    clob_client: Any,
+    execution_asset: str,
+    order_args: Dict[str, Any],
+    side: str,
+) -> Dict[str, Any]:
+    """Submit as FOK first, then fallback to market-style GTC if within 2%."""
+    info(f'[ORDER TRACE] Creating signed order payload: {order_args}')
+    signed_order = await clob_client.create_market_order(order_args)
+    info('[ORDER TRACE] Submitting order to CLOB with type=FOK')
+    resp = await clob_client.post_order(signed_order, 'FOK')
+    info(f'[ORDER TRACE] CLOB response: {resp}')
+
+    if resp.get('success') is True:
+        return resp
+
+    error_message = extract_order_error(resp)
+    warning(f'FOK order failed{f": {error_message}" if error_message else ""}. Checking market fallback...')
+
+    order_book = await clob_client.get_order_book(execution_asset)
+    book_side = 'asks' if side.upper() == 'BUY' else 'bids'
+    levels = order_book.get(book_side) or []
+    if not levels:
+        warning('No liquidity available for market fallback')
+        return resp
+
+    best_level = min(levels, key=lambda x: float(x['price'])) if side.upper() == 'BUY' else max(levels, key=lambda x: float(x['price']))
+    market_price = float(best_level['price'])
+    reference_price = float(order_args.get('price', 0))
+
+    if not is_price_within_tolerance(reference_price, market_price, side):
+        warning(
+            f'Market fallback skipped: price deviation exceeds {MAX_MARKET_FALLBACK_DIFF * 100:.0f}% '
+            f'(target={reference_price:.4f}, market={market_price:.4f})'
+        )
+        return resp
+
+    fallback_order_args = {**order_args, 'price': market_price}
+    info(f'[ORDER TRACE] Market fallback order payload: {fallback_order_args}')
+    fallback_signed_order = await clob_client.create_market_order(fallback_order_args)
+    info('[ORDER TRACE] Submitting fallback order to CLOB with type=GTC')
+    fallback_resp = await clob_client.post_order(fallback_signed_order, 'GTC')
+    info(f'[ORDER TRACE] Fallback CLOB response: {fallback_resp}')
+    return fallback_resp
 
 
 async def post_order(
@@ -144,11 +205,12 @@ async def post_order(
                         'price': float(max_price_bid['price']),
                     }
                 
-                info(f'[ORDER TRACE] Creating signed order payload: {order_args}')
-                signed_order = await clob_client.create_market_order(order_args)
-                info('[ORDER TRACE] Submitting order to CLOB with type=FOK')
-                resp = await clob_client.post_order(signed_order, 'FOK')
-                info(f'[ORDER TRACE] CLOB response: {resp}')
+                resp = await submit_with_fok_then_market(
+                    clob_client=clob_client,
+                    execution_asset=execution_asset,
+                    order_args=order_args,
+                    side='SELL',
+                )
                 
                 if resp.get('success') is True:
                     retry = 0
@@ -272,11 +334,12 @@ async def post_order(
                 
                 info(f'Creating order: ${order_size:.2f} @ ${min_price_ask["price"]} (Balance: ${available_balance:.2f})')
                 
-                info(f'[ORDER TRACE] Creating signed order payload: {order_args}')
-                signed_order = await clob_client.create_market_order(order_args)
-                info('[ORDER TRACE] Submitting order to CLOB with type=FOK')
-                resp = await clob_client.post_order(signed_order, 'FOK')
-                info(f'[ORDER TRACE] CLOB response: {resp}')
+                resp = await submit_with_fok_then_market(
+                    clob_client=clob_client,
+                    execution_asset=execution_asset,
+                    order_args=order_args,
+                    side='BUY',
+                )
                 
                 if resp.get('success') is True:
                     retry = 0
