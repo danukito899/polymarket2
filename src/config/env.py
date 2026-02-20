@@ -20,7 +20,6 @@ def validate_required_env() -> None:
     """Validate required environment variables"""
     required = [
         'USER_ADDRESSES',
-        'PROXY_WALLET',
         'PRIVATE_KEY',
         'CLOB_HTTP_URL',
         'CLOB_WS_URL',
@@ -40,6 +39,13 @@ def validate_required_env() -> None:
         print('See docs/QUICK_START.md for detailed instructions\n')
         raise ValueError(f'Missing required environment variables: {", ".join(missing)}')
 
+    if not os.getenv('CLOB_FUNDER_ADDRESS') and not os.getenv('PROXY_WALLET'):
+        print('\n\033[31m[ERROR]\033[0m Configuration Error: Missing wallet address\n')
+        print('Set at least one of these variables in your .env file:')
+        print('   • CLOB_FUNDER_ADDRESS (recommended for MetaMask/EOA trading)')
+        print('   • PROXY_WALLET (legacy proxy/safe wallet mode)\n')
+        raise ValueError('Either CLOB_FUNDER_ADDRESS or PROXY_WALLET must be configured')
+
 
 def validate_addresses() -> None:
     """Validate Ethereum addresses"""
@@ -54,6 +60,13 @@ def validate_addresses() -> None:
         print('   • Make sure it starts with 0x')
         print('   • Should be exactly 42 characters long\n')
         raise ValueError(f'Invalid PROXY_WALLET address format: {proxy_wallet}')
+
+    funder_wallet = os.getenv('CLOB_FUNDER_ADDRESS')
+    if funder_wallet and not is_valid_ethereum_address(funder_wallet):
+        print('\n[ERROR] Invalid CLOB_FUNDER_ADDRESS\n')
+        print(f'Your CLOB_FUNDER_ADDRESS: {funder_wallet}')
+        print('Expected format:    0x followed by 40 hexadecimal characters\n')
+        raise ValueError(f'Invalid CLOB_FUNDER_ADDRESS format: {funder_wallet}')
 
     usdc_contract = os.getenv('USDC_CONTRACT_ADDRESS')
     if usdc_contract and not is_valid_ethereum_address(usdc_contract):
@@ -271,6 +284,9 @@ class ENV:
     """Environment configuration"""
     USER_ADDRESSES: List[str] = parse_user_addresses(os.getenv('USER_ADDRESSES', ''))
     PROXY_WALLET: str = os.getenv('PROXY_WALLET', '')
+    CLOB_FUNDER_ADDRESS: str = os.getenv('CLOB_FUNDER_ADDRESS', '')
+    CLOB_SIGNATURE_TYPE: int = int(os.getenv('CLOB_SIGNATURE_TYPE', '1'))
+    TRADING_WALLET_ADDRESS: str = CLOB_FUNDER_ADDRESS or PROXY_WALLET
     PRIVATE_KEY: str = os.getenv('PRIVATE_KEY', '')
     CLOB_HTTP_URL: str = os.getenv('CLOB_HTTP_URL', '')
     CLOB_WS_URL: str = os.getenv('CLOB_WS_URL', '')
@@ -293,4 +309,3 @@ class ENV:
     MONGO_URI: str = os.getenv('MONGO_URI', '')
     RPC_URL: str = os.getenv('RPC_URL', '')
     USDC_CONTRACT_ADDRESS: str = os.getenv('USDC_CONTRACT_ADDRESS', '')
-
