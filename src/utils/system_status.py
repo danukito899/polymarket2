@@ -9,7 +9,7 @@ from colorama import init, Fore, Style
 init(autoreset=True)
 
 from ..config.env import ENV
-from ..utils.get_my_balance import get_my_balance
+from ..utils.get_my_balance import get_my_balance, get_usdc_balance_snapshot
 
 
 async def check_system_status() -> Dict[str, Any]:
@@ -81,21 +81,31 @@ async def check_system_status() -> Dict[str, Any]:
     # Check wallet balance
     results['summary']['total_checks'] += 1
     try:
-        balance = get_my_balance(ENV.PROXY_WALLET)
-        wallet_short = f"{ENV.PROXY_WALLET[:6]}...{ENV.PROXY_WALLET[-4:]}"
-        
+        wallet = ENV.TRADING_WALLET_ADDRESS
+        balance = get_my_balance(wallet)
+        snapshot = get_usdc_balance_snapshot(wallet)
+        wallet_short = f"{wallet[:6]}...{wallet[-4:]}"
+
+        details = (
+            f'Wallet: {wallet_short} | Configured USDC: ${snapshot["configured"]:.2f} | '
+            f'USDC.e: ${snapshot["usdc_e"]:.2f} | Native USDC: ${snapshot["native_usdc"]:.2f}'
+        )
+
+        if snapshot['configured'] <= 0 and snapshot['native_usdc'] > 0:
+            details += ' | Native USDC detected; bridge/swap to USDC.e for Polymarket collateral.'
+
         if balance < 10:
             results['checks']['balance'] = {
                 'status': 'warning',
                 'message': f'${balance:.2f} USDC',
-                'details': f'Wallet: {wallet_short} - Low balance warning'
+                'details': details
             }
             results['summary']['warnings'] += 1
         else:
             results['checks']['balance'] = {
                 'status': 'ok',
                 'message': f'${balance:.2f} USDC',
-                'details': f'Wallet: {wallet_short}'
+                'details': details
             }
             results['summary']['passed'] += 1
     except Exception as e:

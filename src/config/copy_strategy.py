@@ -136,7 +136,9 @@ def calculate_order_size(
     if final_amount < config.min_order_size_usd:
         below_minimum = True
         reasoning += f" → Below minimum ${config.min_order_size_usd}"
-        final_amount = config.min_order_size_usd
+        # Do not force amount up to minimum. Returning 0 lets caller skip cleanly,
+        # especially when balance-reduced amount is effectively zero.
+        final_amount = 0
 
     return OrderSizeCalculation(
         trader_order_size=trader_order_size,

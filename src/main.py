@@ -75,7 +75,7 @@ async def main():
         print('  Run system status check: python -m src.scripts.setup.system_status\n')
         
         await connect_db()
-        startup(ENV.USER_ADDRESSES, ENV.PROXY_WALLET)
+        startup(ENV.USER_ADDRESSES, ENV.TRADING_WALLET_ADDRESS)
         
         # Perform initial system status check
         info('Performing initial system status check...')
