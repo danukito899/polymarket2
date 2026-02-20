@@ -7,6 +7,7 @@ import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from web3 import Web3
+from web3.middleware import geth_poa_middleware
 
 from ..config.env import ENV
 from ..utils.fetch_data import fetch_data_async
@@ -161,6 +162,7 @@ async def winnings_recovery_loop() -> None:
     chain_id = int(os.getenv('CHAIN_ID', str(DEFAULT_CHAIN_ID)))
 
     web3 = Web3(Web3.HTTPProvider(ENV.RPC_URL))
+    web3.middleware_onion.inject(geth_poa_middleware, layer=0)
     if not web3.is_connected():
         warning('Winnings recovery disabled: unable to connect to RPC_URL')
         return
