@@ -15,9 +15,7 @@ COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG
 # Polymarket minimum order sizes
 MIN_ORDER_SIZE_USD = 1.0  # Minimum order size in USD for BUY orders
 MIN_ORDER_SIZE_TOKENS = 1.0  # Minimum order size in tokens for SELL/MERGE orders
-MAX_MARKET_FALLBACK_DIFF = ENV.MARKET_FALLBACK_MAX_DIFF
-MAX_ORDER_PRICE_DECIMALS = 2
-MAX_ORDER_SIZE_DECIMALS = 1
+MAX_MARKET_FALLBACK_DIFF = 0.02  # 2% max deviation from intended execution price
 
 
 
@@ -98,9 +96,8 @@ async def submit_with_fok_then_market(
     side: str,
 ) -> Dict[str, Any]:
     """Submit as FOK first, then fallback to market-style GTC if within 2%."""
-    normalized_order_args = normalize_order_args(order_args)
-    info(f'[ORDER TRACE] Creating signed order payload: {normalized_order_args}')
-    signed_order = await clob_client.create_market_order(normalized_order_args)
+    info(f'[ORDER TRACE] Creating signed order payload: {order_args}')
+    signed_order = await clob_client.create_market_order(order_args)
     info('[ORDER TRACE] Submitting order to CLOB with type=FOK')
     resp = await clob_client.post_order(signed_order, 'FOK')
     info(f'[ORDER TRACE] CLOB response: {resp}')
@@ -120,7 +117,7 @@ async def submit_with_fok_then_market(
 
     best_level = min(levels, key=lambda x: float(x['price'])) if side.upper() == 'BUY' else max(levels, key=lambda x: float(x['price']))
     market_price = float(best_level['price'])
-    reference_price = float(normalized_order_args.get('price', 0))
+    reference_price = float(order_args.get('price', 0))
 
     if not is_price_within_tolerance(reference_price, market_price, side):
         warning(
@@ -129,7 +126,7 @@ async def submit_with_fok_then_market(
         )
         return resp
 
-    fallback_order_args = normalize_order_args({**normalized_order_args, 'price': market_price})
+    fallback_order_args = {**order_args, 'price': market_price}
     info(f'[ORDER TRACE] Market fallback order payload: {fallback_order_args}')
     fallback_signed_order = await clob_client.create_market_order(fallback_order_args)
     info('[ORDER TRACE] Submitting fallback order to CLOB with type=GTC')
