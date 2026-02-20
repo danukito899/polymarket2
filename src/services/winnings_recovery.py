@@ -6,7 +6,9 @@ import asyncio
 import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from eth_account import Account
 from web3 import Web3
+from web3.middleware import geth_poa_middleware
 
 from ..config.env import ENV
 from ..utils.fetch_data import fetch_data_async
@@ -50,13 +52,13 @@ def _get_index_set(position: Dict[str, Any]) -> int:
 def _redeem_position(
     web3: Web3,
     contract: Any,
-    wallet: str,
+    tx_wallet: str,
     private_key: str,
     chain_id: int,
     condition_id: str,
     index_set: int,
 ) -> str:
-    nonce = web3.eth.get_transaction_count(wallet)
+    nonce = web3.eth.get_transaction_count(tx_wallet)
 
     tx = contract.functions.redeemPositions(
         Web3.to_checksum_address(ENV.USDC_CONTRACT_ADDRESS),
@@ -64,7 +66,7 @@ def _redeem_position(
         _parse_condition_id(condition_id),
         [index_set],
     ).build_transaction({
-        'from': wallet,
+        'from': tx_wallet,
         'chainId': chain_id,
         'nonce': nonce,
     })
@@ -89,15 +91,17 @@ def _redeem_position(
     return tx_hash_hex
 
 
+
 async def _recover_winnings_once(
     web3: Web3,
     contract: Any,
-    wallet: str,
+    positions_wallet: str,
+    tx_wallet: str,
     private_key: str,
     chain_id: int,
     attempted_in_runtime: Set[Tuple[str, int]],
 ) -> None:
-    positions_url = f'https://data-api.polymarket.com/positions?user={wallet}'
+    positions_url = f'https://data-api.polymarket.com/positions?user={positions_wallet}'
     positions_data = await fetch_data_async(positions_url)
 
     if not isinstance(positions_data, list):
@@ -129,7 +133,7 @@ async def _recover_winnings_once(
                 _redeem_position,
                 web3,
                 contract,
-                wallet,
+                tx_wallet,
                 private_key,
                 chain_id,
                 condition_id,
@@ -161,11 +165,24 @@ async def winnings_recovery_loop() -> None:
     chain_id = int(os.getenv('CHAIN_ID', str(DEFAULT_CHAIN_ID)))
 
     web3 = Web3(Web3.HTTPProvider(ENV.RPC_URL))
+    web3.middleware_onion.inject(geth_poa_middleware, layer=0)
     if not web3.is_connected():
         warning('Winnings recovery disabled: unable to connect to RPC_URL')
         return
 
-    wallet = Web3.to_checksum_address(ENV.PROXY_WALLET)
+    tx_wallet = Account.from_key(ENV.PRIVATE_KEY).address
+    positions_wallet = os.getenv('WINNINGS_RECOVERY_WALLET', ENV.PROXY_WALLET or tx_wallet)
+
+    tx_wallet = Web3.to_checksum_address(tx_wallet)
+    positions_wallet = Web3.to_checksum_address(positions_wallet)
+
+    if positions_wallet != tx_wallet:
+        warning(
+            'Winnings recovery wallet mismatch detected: '
+            f'positions wallet {positions_wallet} differs from signer wallet {tx_wallet}. '
+            'Transactions will be sent from signer wallet.'
+        )
+
     contract = web3.eth.contract(
         address=Web3.to_checksum_address(ctf_contract_address),
         abi=CTF_EXCHANGE_ABI,
@@ -173,14 +190,20 @@ async def winnings_recovery_loop() -> None:
 
     attempted_in_runtime: Set[Tuple[str, int]] = set()
 
-    info(f'Winnings recovery started (every {interval_seconds}s)')
+    info(
+        f'Winnings recovery started (every {interval_seconds}s) '
+        f'for positions wallet {positions_wallet}'
+    )
 
     while is_running:
+        cycle_start = asyncio.get_running_loop().time()
+
         try:
             await _recover_winnings_once(
                 web3,
                 contract,
-                wallet,
+                positions_wallet,
+                tx_wallet,
                 ENV.PRIVATE_KEY,
                 chain_id,
                 attempted_in_runtime,
@@ -188,7 +211,8 @@ async def winnings_recovery_loop() -> None:
         except Exception as exc:
             error(f'Winnings recovery loop error: {exc}')
 
-        await asyncio.sleep(interval_seconds)
+        elapsed = asyncio.get_running_loop().time() - cycle_start
+        await asyncio.sleep(max(0, interval_seconds - elapsed))
 
     info('Winnings recovery stopped')
 
