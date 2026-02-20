@@ -44,9 +44,23 @@ def _parse_condition_id(value: str) -> bytes:
     return bytes.fromhex(raw)
 
 
-def _get_index_set(position: Dict[str, Any]) -> int:
-    outcome_index = int(position.get('outcomeIndex', 0) or 0)
-    return 1 << outcome_index
+def _has_min_native_balance(web3: Web3, tx_wallet: str) -> bool:
+    balance_wei = web3.eth.get_balance(tx_wallet)
+    gas_price_wei = web3.eth.gas_price
+    min_required_wei = gas_price_wei * 21000
+
+    if balance_wei < min_required_wei:
+        warning(
+            'Winnings recovery skipped: insufficient native gas balance for signer wallet '
+            f'{tx_wallet} (balance={balance_wei} wei, required~{min_required_wei} wei)'
+        )
+        return False
+
+    return True
+
+
+def _is_wallet_mismatch_redeemable(tx_wallet: str, signer_wallet: str) -> bool:
+    return tx_wallet.lower() == signer_wallet.lower()
 
 
 def _has_min_native_balance(web3: Web3, tx_wallet: str) -> bool:
@@ -71,7 +85,7 @@ def _redeem_position(
     private_key: str,
     chain_id: int,
     condition_id: str,
-    index_set: int,
+    index_sets: List[int],
 ) -> str:
     nonce = web3.eth.get_transaction_count(tx_wallet)
 
@@ -79,7 +93,7 @@ def _redeem_position(
         Web3.to_checksum_address(ENV.USDC_CONTRACT_ADDRESS),
         _parse_condition_id(ZERO_BYTES32),
         _parse_condition_id(condition_id),
-        [index_set],
+        index_sets,
     ).build_transaction({
         'from': tx_wallet,
         'chainId': chain_id,
@@ -114,7 +128,7 @@ async def _recover_winnings_once(
     tx_wallet: str,
     private_key: str,
     chain_id: int,
-    attempted_in_runtime: Set[Tuple[str, int]],
+    attempted_in_runtime: Set[str],
 ) -> None:
     positions_url = f'https://data-api.polymarket.com/positions?user={positions_wallet}'
     positions_data = await fetch_data_async(positions_url)
@@ -133,14 +147,20 @@ async def _recover_winnings_once(
     if not redeemable_positions:
         return
 
-    info(f'Winnings recovery: found {len(redeemable_positions)} redeemable position(s)')
-
+    positions_by_condition: Dict[str, Dict[str, Any]] = {}
     for position in redeemable_positions:
         condition_id = str(position.get('conditionId'))
-        index_set = _get_index_set(position)
-        key = (condition_id, index_set)
+        if condition_id and condition_id not in positions_by_condition:
+            positions_by_condition[condition_id] = position
 
-        if key in attempted_in_runtime:
+    info(
+        'Winnings recovery: found '
+        f"{len(redeemable_positions)} redeemable position(s) across "
+        f"{len(positions_by_condition)} condition(s)"
+    )
+
+    for condition_id, position in positions_by_condition.items():
+        if condition_id in attempted_in_runtime:
             continue
 
         try:
@@ -152,14 +172,14 @@ async def _recover_winnings_once(
                 private_key,
                 chain_id,
                 condition_id,
-                index_set,
+                [1, 2],
             )
             success(
                 'Recovered winnings for '
                 f"{position.get('title', position.get('slug', 'unknown market'))} "
                 f'(tx: {tx_hash})'
             )
-            attempted_in_runtime.add(key)
+            attempted_in_runtime.add(condition_id)
         except Exception as exc:
             warning(
                 'Winnings recovery failed for '
@@ -203,7 +223,7 @@ async def winnings_recovery_loop() -> None:
         abi=CTF_EXCHANGE_ABI,
     )
 
-    attempted_in_runtime: Set[Tuple[str, int]] = set()
+    attempted_in_runtime: Set[str] = set()
 
     info(
         f'Winnings recovery started (every {interval_seconds}s) '
