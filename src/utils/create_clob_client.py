@@ -280,7 +280,7 @@ class ClobClient:
             try:
                 from py_clob_client.clob_types import MarketOrderArgs  # type: ignore
 
-                sdk_market_args = MarketOrderArgs(token_id=token_id, amount=amount, side=side, price=price)
+                sdk_market_args = MarketOrderArgs(token_id=token_id, amount=amount, side=side)
             except Exception:
                 pass
 
