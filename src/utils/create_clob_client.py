@@ -3,6 +3,7 @@ Create Polymarket CLOB client
 """
 import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))); import src.lib_core
 import inspect
+import math
 from typing import Optional, Dict, Any, Callable
 from web3 import Web3
 from eth_account import Account
@@ -21,6 +22,16 @@ def _to_bool(value: Any, default: bool = True) -> bool:
 
 
 TRACE_LOGS = _to_bool(os.getenv('CLOB_TRACE_LOGS', 'true'), default=True)
+
+
+MAX_ORDER_PRICE_DECIMALS = 2
+MAX_ORDER_SIZE_DECIMALS = 1
+
+
+def _truncate_to_decimals(value: Any, decimals: int) -> float:
+    """Truncate a numeric value to a maximum decimal precision."""
+    factor = 10 ** decimals
+    return math.floor(float(value) * factor) / factor
 
 
 def trace(message: str) -> None:
@@ -250,8 +261,8 @@ class ClobClient:
         """Create/sign an order using SDK."""
         side = str(order_args.get('side', 'BUY')).upper()
         token_id = str(order_args.get('tokenID') or order_args.get('token_id') or '')
-        amount = float(order_args.get('amount', 0))
-        price = float(order_args.get('price', 0))
+        amount = _truncate_to_decimals(order_args.get('amount', 0), MAX_ORDER_SIZE_DECIMALS)
+        price = _truncate_to_decimals(order_args.get('price', 0), MAX_ORDER_PRICE_DECIMALS)
 
         trace(
             f'create_market_order(side={side}, token_id={token_id}, amount={amount}, price={price}) called'

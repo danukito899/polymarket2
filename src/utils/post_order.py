@@ -3,6 +3,7 @@ Post order to Polymarket
 """
 import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))); import src.lib_core
 from typing import Optional, Dict, Any, List, Tuple
+import math
 from ..config.env import ENV
 from ..models.user_history import get_user_activity_collection
 from ..utils.logger import info, warning, order_result
@@ -16,6 +17,21 @@ MIN_ORDER_SIZE_USD = 1.0  # Minimum order size in USD for BUY orders
 MIN_ORDER_SIZE_TOKENS = 1.0  # Minimum order size in tokens for SELL/MERGE orders
 MAX_MARKET_FALLBACK_DIFF = 0.02  # 2% max deviation from intended execution price
 
+
+
+
+def _round_to_decimals(value: float, decimals: int) -> float:
+    """Truncate numeric value to a maximum number of decimal places."""
+    factor = 10 ** decimals
+    return math.floor(float(value) * factor) / factor
+
+
+def normalize_order_args(order_args: Dict[str, Any]) -> Dict[str, Any]:
+    """Clamp order price/amount precision for exchange compatibility."""
+    normalized = dict(order_args)
+    normalized['price'] = _round_to_decimals(order_args.get('price', 0), MAX_ORDER_PRICE_DECIMALS)
+    normalized['amount'] = _round_to_decimals(order_args.get('amount', 0), MAX_ORDER_SIZE_DECIMALS)
+    return normalized
 
 def extract_order_error(response: Any) -> Optional[str]:
     """Extract error message from order response"""
@@ -194,16 +210,21 @@ async def post_order(
                     order_args = {
                         'side': 'SELL',
                         'tokenID': execution_asset,
-                        'amount': remaining,
-                        'price': float(max_price_bid['price']),
+                        'amount': _round_to_decimals(remaining, MAX_ORDER_SIZE_DECIMALS),
+                        'price': _round_to_decimals(float(max_price_bid['price']), MAX_ORDER_PRICE_DECIMALS),
                     }
                 else:
                     order_args = {
                         'side': 'SELL',
                         'tokenID': execution_asset,
-                        'amount': float(max_price_bid['size']),
-                        'price': float(max_price_bid['price']),
+                        'amount': _round_to_decimals(float(max_price_bid['size']), MAX_ORDER_SIZE_DECIMALS),
+                        'price': _round_to_decimals(float(max_price_bid['price']), MAX_ORDER_PRICE_DECIMALS),
                     }
+
+                if order_args['amount'] <= 0:
+                    warning('Order amount rounded to 0.0 after precision clamp - skipping')
+                    collection.update_one({'_id': trade['_id']}, {'$set': {'bot': True}})
+                    break
                 
                 resp = await submit_with_fok_then_market(
                     clob_client=clob_client,
@@ -319,20 +340,32 @@ async def post_order(
                     )
                     break
                 
-                # Check if balance is sufficient for the order
-                if available_balance < order_size:
-                    warning(f'Insufficient balance: Need ${order_size:.2f} but only have ${available_balance:.2f}')
-                    abort_due_to_funds = True
-                    break
-                
                 order_args = {
                     'side': 'BUY',
                     'tokenID': execution_asset,
-                    'amount': order_size,
-                    'price': float(min_price_ask['price']),
+                    'amount': _round_to_decimals(order_size, MAX_ORDER_SIZE_DECIMALS),
+                    'price': _round_to_decimals(float(min_price_ask['price']), MAX_ORDER_PRICE_DECIMALS),
                 }
+
+                if order_args['amount'] < MIN_ORDER_SIZE_USD:
+                    info(
+                        f'Rounded order size (${order_args["amount"]:.2f}) below minimum (${MIN_ORDER_SIZE_USD}) - completing trade'
+                    )
+                    collection.update_one(
+                        {'_id': trade['_id']},
+                        {'$set': {'bot': True, 'myBoughtSize': total_bought_tokens}}
+                    )
+                    break
+
+                # Check if balance is sufficient for the rounded order
+                if available_balance < order_args['amount']:
+                    warning(
+                        f'Insufficient balance: Need ${order_args["amount"]:.2f} but only have ${available_balance:.2f}'
+                    )
+                    abort_due_to_funds = True
+                    break
                 
-                info(f'Creating order: ${order_size:.2f} @ ${min_price_ask["price"]} (Balance: ${available_balance:.2f})')
+                info(f'Creating order: ${order_args["amount"]:.2f} @ ${order_args["price"]} (Balance: ${available_balance:.2f})')
                 
                 resp = await submit_with_fok_then_market(
                     clob_client=clob_client,
