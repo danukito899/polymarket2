@@ -14,7 +14,7 @@ COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG
 # Polymarket minimum order sizes
 MIN_ORDER_SIZE_USD = 1.0  # Minimum order size in USD for BUY orders
 MIN_ORDER_SIZE_TOKENS = 1.0  # Minimum order size in tokens for SELL/MERGE orders
-MAX_MARKET_FALLBACK_DIFF = ENV.MARKET_FALLBACK_MAX_DIFF
+MAX_MARKET_FALLBACK_DIFF = 0.02  # 2% max deviation from intended execution price
 
 
 def extract_order_error(response: Any) -> Optional[str]:
