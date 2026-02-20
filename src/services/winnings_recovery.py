@@ -18,7 +18,6 @@ ZERO_BYTES32 = '0x' + ('0' * 64)
 DEFAULT_CTF_CONTRACT_ADDRESS = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045'
 DEFAULT_CHAIN_ID = 137
 DEFAULT_INTERVAL_SECONDS = 60
-DEFAULT_SKIP_MISMATCH_LOG_INTERVAL_SECONDS = 300
 
 CTF_EXCHANGE_ABI = [
     {
@@ -62,6 +61,21 @@ def _has_min_native_balance(web3: Web3, tx_wallet: str) -> bool:
 
 def _is_wallet_mismatch_redeemable(tx_wallet: str, signer_wallet: str) -> bool:
     return tx_wallet.lower() == signer_wallet.lower()
+
+
+def _has_min_native_balance(web3: Web3, tx_wallet: str) -> bool:
+    balance_wei = web3.eth.get_balance(tx_wallet)
+    gas_price_wei = web3.eth.gas_price
+    min_required_wei = gas_price_wei * 21000
+
+    if balance_wei < min_required_wei:
+        warning(
+            'Winnings recovery skipped: insufficient native gas balance for signer wallet '
+            f'{tx_wallet} (balance={balance_wei} wei, required~{min_required_wei} wei)'
+        )
+        return False
+
+    return True
 
 
 def _redeem_position(
@@ -191,19 +205,17 @@ async def winnings_recovery_loop() -> None:
         warning('Winnings recovery disabled: unable to connect to RPC_URL')
         return
 
-    signer_wallet = Web3.to_checksum_address(Account.from_key(ENV.PRIVATE_KEY).address)
-    tx_wallet = Web3.to_checksum_address(
-        os.getenv('WINNINGS_RECOVERY_TX_WALLET', ENV.PROXY_WALLET or signer_wallet)
-    )
-    positions_wallet = Web3.to_checksum_address(
-        os.getenv('WINNINGS_RECOVERY_WALLET', tx_wallet)
-    )
+    tx_wallet = Account.from_key(ENV.PRIVATE_KEY).address
+    positions_wallet = os.getenv('WINNINGS_RECOVERY_WALLET', ENV.PROXY_WALLET or tx_wallet)
+
+    tx_wallet = Web3.to_checksum_address(tx_wallet)
+    positions_wallet = Web3.to_checksum_address(positions_wallet)
 
     if positions_wallet != tx_wallet:
         warning(
             'Winnings recovery wallet mismatch detected: '
-            f'positions wallet {positions_wallet} differs from tx wallet {tx_wallet}. '
-            'Claims can only redeem balances owned by tx wallet.'
+            f'positions wallet {positions_wallet} differs from signer wallet {tx_wallet}. '
+            'Transactions will be sent from signer wallet.'
         )
 
     contract = web3.eth.contract(
@@ -215,36 +227,22 @@ async def winnings_recovery_loop() -> None:
 
     info(
         f'Winnings recovery started (every {interval_seconds}s) '
-        f'for positions wallet {positions_wallet} using tx wallet {tx_wallet}'
+        f'for positions wallet {positions_wallet}'
     )
-
-    last_mismatch_warning_at = 0.0
 
     while is_running:
         cycle_start = asyncio.get_running_loop().time()
 
         try:
-            now = asyncio.get_running_loop().time()
-            if not _is_wallet_mismatch_redeemable(tx_wallet, signer_wallet):
-                if now - last_mismatch_warning_at >= DEFAULT_SKIP_MISMATCH_LOG_INTERVAL_SECONDS:
-                    warning(
-                        'Winnings recovery skipped: tx wallet does not match PRIVATE_KEY signer. '
-                        f'tx wallet={tx_wallet}, signer={signer_wallet}. '
-                        'For proxy/safe wallets, run redemption from the wallet owner/safe flow.'
-                    )
-                    last_mismatch_warning_at = now
-            else:
-                has_gas = await asyncio.to_thread(_has_min_native_balance, web3, tx_wallet)
-                if has_gas:
-                    await _recover_winnings_once(
-                        web3,
-                        contract,
-                        positions_wallet,
-                        tx_wallet,
-                        ENV.PRIVATE_KEY,
-                        chain_id,
-                        attempted_in_runtime,
-                    )
+            await _recover_winnings_once(
+                web3,
+                contract,
+                positions_wallet,
+                tx_wallet,
+                ENV.PRIVATE_KEY,
+                chain_id,
+                attempted_in_runtime,
+            )
         except Exception as exc:
             error(f'Winnings recovery loop error: {exc}')
 
