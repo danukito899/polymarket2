@@ -276,36 +276,18 @@ class ClobClient:
 
         # Try SDK create_market_order path first.
         if hasattr(self._sdk_client, 'create_market_order'):
-            normalized_order_args = {
-                **order_args,
-                'side': side,
-                'tokenID': token_id,
-                'token_id': token_id,
-                'amount': amount,
-                'price': price,
-            }
-
+            sdk_market_args: Any = order_args
             try:
-                signed = await _call_maybe_async(self._sdk_client.create_market_order, normalized_order_args)
-                trace('create_market_order() signed order generated via SDK method create_market_order (dict args)')
-                signed_dict = _to_plain_dict(signed)
-                return signed if isinstance(signed, dict) else signed_dict
-            except Exception as first_error:
-                trace(f'create_market_order(dict args) failed: {first_error}. Retrying with MarketOrderArgs...')
+                from py_clob_client.clob_types import MarketOrderArgs  # type: ignore
 
-                try:
-                    from py_clob_client.clob_types import MarketOrderArgs  # type: ignore
+                sdk_market_args = MarketOrderArgs(token_id=token_id, amount=amount, side=side)
+            except Exception:
+                pass
 
-                    typed_args = MarketOrderArgs(token_id=token_id, amount=amount, side=side, price=price)
-                    signed = await _call_maybe_async(self._sdk_client.create_market_order, typed_args)
-                    trace('create_market_order() signed order generated via SDK method create_market_order (typed args)')
-                    signed_dict = _to_plain_dict(signed)
-                    return signed if isinstance(signed, dict) else signed_dict
-                except Exception as second_error:
-                    raise RuntimeError(
-                        f'Failed to create market order with SDK create_market_order: '
-                        f'dict_error={first_error}; typed_error={second_error}'
-                    )
+            signed = await _call_maybe_async(self._sdk_client.create_market_order, sdk_market_args)
+            trace('create_market_order() signed order generated via SDK method create_market_order')
+            signed_dict = _to_plain_dict(signed)
+            return signed if isinstance(signed, dict) else signed_dict
 
         # Fallback to create_order using typed order args from py_clob_client.
         try:
