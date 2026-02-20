@@ -17,7 +17,7 @@ from ..utils.logger import info, success, warning, error
 ZERO_BYTES32 = '0x' + ('0' * 64)
 DEFAULT_CTF_CONTRACT_ADDRESS = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045'
 DEFAULT_CHAIN_ID = 137
-DEFAULT_INTERVAL_SECONDS = 30
+DEFAULT_INTERVAL_SECONDS = 60
 
 CTF_EXCHANGE_ABI = [
     {
@@ -47,6 +47,21 @@ def _parse_condition_id(value: str) -> bytes:
 def _get_index_set(position: Dict[str, Any]) -> int:
     outcome_index = int(position.get('outcomeIndex', 0) or 0)
     return 1 << outcome_index
+
+
+def _has_min_native_balance(web3: Web3, tx_wallet: str) -> bool:
+    balance_wei = web3.eth.get_balance(tx_wallet)
+    gas_price_wei = web3.eth.gas_price
+    min_required_wei = gas_price_wei * 21000
+
+    if balance_wei < min_required_wei:
+        warning(
+            'Winnings recovery skipped: insufficient native gas balance for signer wallet '
+            f'{tx_wallet} (balance={balance_wei} wei, required~{min_required_wei} wei)'
+        )
+        return False
+
+    return True
 
 
 def _redeem_position(
