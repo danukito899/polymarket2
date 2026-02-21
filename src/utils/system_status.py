@@ -81,7 +81,7 @@ async def check_system_status() -> Dict[str, Any]:
     # Check wallet balance
     results['summary']['total_checks'] += 1
     try:
-        wallet = ENV.TRADING_WALLET_ADDRESS
+        wallet = ENV.BALANCE_WALLET_ADDRESS
         balance = get_my_balance(wallet)
         snapshot = get_usdc_balance_snapshot(wallet)
         wallet_short = f"{wallet[:6]}...{wallet[-4:]}"
