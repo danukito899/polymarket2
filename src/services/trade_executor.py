@@ -12,7 +12,7 @@ from ..utils.fetch_data import fetch_data_async
 from ..utils.get_my_balance import get_my_balance_async
 from ..utils.post_order import post_order
 from ..utils.logger import (
-    success, info, warning, header, waiting, clear_line, separator, trade as log_trade, balance as log_balance
+    success, info, header, waiting, clear_line, separator, trade as log_trade, balance as log_balance
 )
 
 USER_ADDRESSES = ENV.USER_ADDRESSES
@@ -24,6 +24,8 @@ TRADE_AGGREGATION_MIN_TOTAL_USD = 1.0  # Polymarket minimum
 FETCH_INTERVAL = ENV.FETCH_INTERVAL
 
 is_running = True
+executor_start_time_ms: Optional[int] = None
+executor_start_time_s: Optional[int] = None
 
 # Type definitions (using Dict for flexibility)
 TradeWithUser = Dict[str, Any]
@@ -35,50 +37,36 @@ trade_aggregation_buffer: Dict[str, AggregatedTrade] = {}
 
 
 async def read_temp_trades() -> List[TradeWithUser]:
-    """Read unprocessed trades from database"""
+    """Read unprocessed trades from database captured after executor startup."""
     all_trades: List[TradeWithUser] = []
-    
+
+    if executor_start_time_ms is None or executor_start_time_s is None:
+        return all_trades
+
     for address in USER_ADDRESSES:
         collection = get_user_activity_collection(address)
-        # Only get trades that haven't been processed yet (bot: false AND botExcutedTime: 0)
-        # This prevents processing the same trade multiple times
+        # Only load trades created after startup so historical rows are never replayed.
+        # Supports both seconds and milliseconds timestamp formats.
         trades = list(collection.find({
             'type': 'TRADE',
             'bot': False,
-            'botExcutedTime': 0
+            'botExcutedTime': 0,
+            '$or': [
+                {'timestamp': {'$gte': executor_start_time_ms}},
+                {
+                    'timestamp': {
+                        '$gte': executor_start_time_s,
+                        '$lt': 1000000000000,
+                    }
+                },
+            ],
         }))
-        
+
         for trade in trades:
             trade['userAddress'] = address
             all_trades.append(trade)
-    
+
     return all_trades
-
-
-async def skip_existing_unprocessed_trades() -> int:
-    """Mark any pre-existing unprocessed trades as skipped on startup.
-
-    This prevents replaying historical trades after a fresh bot start.
-    """
-    skipped_total = 0
-
-    for address in USER_ADDRESSES:
-        collection = get_user_activity_collection(address)
-        result = collection.update_many(
-            {
-                'type': 'TRADE',
-                'bot': False,
-                'botExcutedTime': 0,
-            },
-            {
-                '$set': {
-                    'bot': True,
-                }
-            },
-        )
-        skipped_total += result.modified_count
-
-    return skipped_total
 
 
 def get_aggregation_key(trade: TradeWithUser) -> str:
@@ -307,6 +295,12 @@ def stop_trade_executor() -> None:
 
 async def trade_executor(clob_client: Any) -> None:
     """Main trade executor function"""
+    global executor_start_time_ms, executor_start_time_s
+
+    now_ms = int(time.time() * 1000)
+    executor_start_time_ms = now_ms
+    executor_start_time_s = now_ms // 1000
+
     success(f'Trade executor ready for {len(USER_ADDRESSES)} trader(s)')
     if TRADE_AGGREGATION_ENABLED:
         info(
@@ -314,13 +308,8 @@ async def trade_executor(clob_client: Any) -> None:
             f'${TRADE_AGGREGATION_MIN_TOTAL_USD} minimum'
         )
 
-    skipped_trades = await skip_existing_unprocessed_trades()
-    if skipped_trades > 0:
-        warning(
-            f'Skipped {skipped_trades} historical unprocessed trade(s) at startup '
-            'to avoid replaying old activity'
-        )
-    
+    info('Ignoring historical trades from before executor startup')
+
     last_check = time.time()
     
     while is_running:
