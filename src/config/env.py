@@ -287,6 +287,8 @@ class ENV:
     CLOB_FUNDER_ADDRESS: str = os.getenv('CLOB_FUNDER_ADDRESS', '')
     CLOB_SIGNATURE_TYPE: int = int(os.getenv('CLOB_SIGNATURE_TYPE', '1'))
     TRADING_WALLET_ADDRESS: str = CLOB_FUNDER_ADDRESS or PROXY_WALLET
+    # Balance and position checks should always use proxy/safe wallet when available.
+    BALANCE_WALLET_ADDRESS: str = PROXY_WALLET or TRADING_WALLET_ADDRESS
     PRIVATE_KEY: str = os.getenv('PRIVATE_KEY', '')
     CLOB_HTTP_URL: str = os.getenv('CLOB_HTTP_URL', '')
     CLOB_WS_URL: str = os.getenv('CLOB_WS_URL', '')

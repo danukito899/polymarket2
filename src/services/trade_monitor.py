@@ -47,11 +47,11 @@ async def init():
     
     # Show your own positions first
     try:
-        my_positions_url = f'https://data-api.polymarket.com/positions?user={ENV.TRADING_WALLET_ADDRESS}'
+        my_positions_url = f'https://data-api.polymarket.com/positions?user={ENV.BALANCE_WALLET_ADDRESS}'
         my_positions_data = await fetch_data_async(my_positions_url)
         
         # Get current USDC balance
-        current_balance = get_my_balance(ENV.TRADING_WALLET_ADDRESS)
+        current_balance = get_my_balance(ENV.BALANCE_WALLET_ADDRESS)
         
         if isinstance(my_positions_data, list) and len(my_positions_data) > 0:
             # Calculate your overall profitability and initial investment
@@ -69,7 +69,7 @@ async def init():
             
             clear_line()
             my_positions(
-                ENV.TRADING_WALLET_ADDRESS,
+                ENV.BALANCE_WALLET_ADDRESS,
                 len(my_positions_data),
                 my_top_positions,
                 my_overall_pnl,
@@ -79,7 +79,7 @@ async def init():
             )
         else:
             clear_line()
-            my_positions(ENV.TRADING_WALLET_ADDRESS, 0, [], 0, 0, 0, current_balance)
+            my_positions(ENV.BALANCE_WALLET_ADDRESS, 0, [], 0, 0, 0, current_balance)
     except Exception as e:
         error(f'Failed to fetch your positions: {e}')
     
