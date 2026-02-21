@@ -55,6 +55,32 @@ async def read_temp_trades() -> List[TradeWithUser]:
     return all_trades
 
 
+async def skip_existing_unprocessed_trades() -> int:
+    """Mark any pre-existing unprocessed trades as skipped on startup.
+
+    This prevents replaying historical trades after a fresh bot start.
+    """
+    skipped_total = 0
+
+    for address in USER_ADDRESSES:
+        collection = get_user_activity_collection(address)
+        result = collection.update_many(
+            {
+                'type': 'TRADE',
+                'bot': False,
+                'botExcutedTime': 0,
+            },
+            {
+                '$set': {
+                    'bot': True,
+                }
+            },
+        )
+        skipped_total += result.modified_count
+
+    return skipped_total
+
+
 def get_aggregation_key(trade: TradeWithUser) -> str:
     """Generate a unique key for trade aggregation based on user, market, side"""
     return f"{trade['userAddress']}:{trade.get('conditionId', '')}:{trade.get('asset', '')}:{trade.get('side', 'BUY')}"
@@ -286,6 +312,13 @@ async def trade_executor(clob_client: Any) -> None:
         info(
             f'Trade aggregation enabled: {TRADE_AGGREGATION_WINDOW_SECONDS}s window, '
             f'${TRADE_AGGREGATION_MIN_TOTAL_USD} minimum'
+        )
+
+    skipped_trades = await skip_existing_unprocessed_trades()
+    if skipped_trades > 0:
+        warning(
+            f'Skipped {skipped_trades} historical unprocessed trade(s) at startup '
+            'to avoid replaying old activity'
         )
     
     last_check = time.time()
