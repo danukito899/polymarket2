@@ -12,8 +12,8 @@ from ..config.copy_strategy import calculate_order_size, get_trade_multiplier
 RETRY_LIMIT = ENV.RETRY_LIMIT
 COPY_STRATEGY_CONFIG = ENV.COPY_STRATEGY_CONFIG
 
-# Polymarket minimum order sizes
-MIN_ORDER_SIZE_USD = 1.0  # Minimum order size in USD for BUY orders
+# Order minimums
+MIN_ORDER_SIZE_USD = COPY_STRATEGY_CONFIG.min_order_size_usd  # Minimum order size in USD for BUY orders
 MIN_ORDER_SIZE_TOKENS = 1.0  # Minimum order size in tokens for SELL/MERGE orders
 MAX_MARKET_FALLBACK_DIFF = 0.02  # 2% max deviation from intended execution price
 
