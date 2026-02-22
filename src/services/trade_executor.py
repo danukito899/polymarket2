@@ -11,6 +11,7 @@ from ..interfaces.user import UserActivityInterface, UserPositionInterface
 from ..utils.fetch_data import fetch_data_async
 from ..utils.get_my_balance import get_my_balance_async
 from ..utils.post_order import post_order
+from ..services.trading_simulation import SIMULATION
 from ..utils.logger import (
     success, info, warning, header, waiting, clear_line, separator, trade as log_trade, balance as log_balance
 )
@@ -188,16 +189,26 @@ async def do_trading(clob_client: Any, trades: List[TradeWithUser]) -> None:
         log_balance(my_balance, user_balance, trade['userAddress'])
         
         # Execute the trade
-        await post_order(
-            clob_client,
-            'buy' if trade.get('side') == 'BUY' else 'sell',
-            my_position,
-            user_position,
-            trade,
-            my_balance,
-            user_balance,
-            trade['userAddress']
-        )
+        if SIMULATION.enabled:
+            await SIMULATION.simulate_trade(
+                clob_client=clob_client,
+                trade=trade,
+                my_position=my_position,
+                live_balance=my_balance,
+                user_address=trade['userAddress'],
+            )
+            collection.update_one({'_id': trade['_id']}, {'$set': {'bot': True}})
+        else:
+            await post_order(
+                clob_client,
+                'buy' if trade.get('side') == 'BUY' else 'sell',
+                my_position,
+                user_position,
+                trade,
+                my_balance,
+                user_balance,
+                trade['userAddress']
+            )
         
         separator()
 
@@ -258,16 +269,28 @@ async def do_aggregated_trading(clob_client: Any, aggregated_trades: List[Aggreg
         }
         
         # Execute the aggregated trade
-        await post_order(
-            clob_client,
-            'buy' if agg.get('side', 'BUY') == 'BUY' else 'sell',
-            my_position,
-            user_position,
-            synthetic_trade,
-            my_balance,
-            user_balance,
-            agg['userAddress']
-        )
+        if SIMULATION.enabled:
+            await SIMULATION.simulate_trade(
+                clob_client=clob_client,
+                trade=synthetic_trade,
+                my_position=my_position,
+                live_balance=my_balance,
+                user_address=agg['userAddress'],
+            )
+            for trade in agg['trades']:
+                collection = get_user_activity_collection(trade['userAddress'])
+                collection.update_one({'_id': trade['_id']}, {'$set': {'bot': True}})
+        else:
+            await post_order(
+                clob_client,
+                'buy' if agg.get('side', 'BUY') == 'BUY' else 'sell',
+                my_position,
+                user_position,
+                synthetic_trade,
+                my_balance,
+                user_balance,
+                agg['userAddress']
+            )
         
         separator()
 

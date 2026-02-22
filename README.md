@@ -134,6 +134,9 @@ Create a `.env` file with the following configuration:
 | `CLOB_HTTP_URL` | Polymarket CLOB API | `'https://clob.polymarket.com'` |
 | `TRADE_MULTIPLIER` | Position size multiplier | `1.0` |
 | `FETCH_INTERVAL` | Polling interval (seconds) | `1` |
+| `TRADING_SIMULATION` | `Y` = simulate and do not submit live orders | `Y` or `N` |
+| `SIMULATION_TOTAL_BALANCE` | Virtual account size used in simulation mode | `1000` |
+| `SIMULATION_RESULTS_FILE` | CSV output path for simulation trades | `strategy_factory_results/trading_simulation.csv` |
 
 ### Finding Target Wallets
 
