@@ -3,7 +3,7 @@ import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 from ..config.copy_strategy import calculate_order_size
 from ..config.env import ENV
@@ -27,15 +27,25 @@ class TradingSimulation:
         self.last_mid_prices: Dict[str, float] = {}
         self.win_carry = 0.0
         self.loss_carry = 0.0
-        self.filepath = Path(ENV.SIMULATION_RESULTS_FILE)
-        self._initialized = False
+        self.base_filepath = Path(ENV.SIMULATION_RESULTS_FILE)
+        self._initialized_files: Set[Path] = set()
 
-    def _initialize_file(self) -> None:
-        if self._initialized:
+    def _filepath_for_user(self, user_address: str) -> Path:
+        trader_suffix = (user_address or 'unknown').strip().lower()
+        suffix = self.base_filepath.suffix or '.csv'
+        if self.base_filepath.suffix:
+            base_name = self.base_filepath.name[: -len(self.base_filepath.suffix)]
+        else:
+            base_name = self.base_filepath.name
+        filename = f'{base_name}_{trader_suffix}{suffix}'
+        return self.base_filepath.with_name(filename)
+
+    def _initialize_file(self, filepath: Path) -> None:
+        if filepath in self._initialized_files:
             return
-        self.filepath.parent.mkdir(parents=True, exist_ok=True)
-        if not self.filepath.exists():
-            with self.filepath.open('w', newline='', encoding='utf-8') as handle:
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        if not filepath.exists():
+            with filepath.open('w', newline='', encoding='utf-8') as handle:
                 writer = csv.writer(handle)
                 writer.writerow([
                     'timestamp',
@@ -57,7 +67,7 @@ class TradingSimulation:
                     'win_carry',
                     'loss_carry',
                 ])
-        self._initialized = True
+        self._initialized_files.add(filepath)
 
     async def simulate_trade(
         self,
@@ -67,7 +77,8 @@ class TradingSimulation:
         live_balance: float,
         user_address: str,
     ) -> Dict[str, Any]:
-        self._initialize_file()
+        filepath = self._filepath_for_user(user_address)
+        self._initialize_file(filepath)
 
         market = trade.get('slug') or trade.get('eventSlug') or 'unknown'
         asset = str(trade.get('asset') or '')
@@ -77,7 +88,7 @@ class TradingSimulation:
 
         if not asset:
             result = self._snapshot_result(timestamp, market, asset, side, 'skipped', 'missing asset', 0, 0, 0, 0, 0)
-            self._write_result(result)
+            self._write_result(filepath, result)
             return result
 
         order_book = await clob_client.get_order_book(asset)
@@ -91,7 +102,7 @@ class TradingSimulation:
         if side == 'BUY':
             if best_ask <= 0:
                 result = self._snapshot_result(timestamp, market, asset, side, 'skipped', 'no asks', trade_size_usdc, 0, 0, best_bid, best_ask)
-                self._write_result(result)
+                self._write_result(filepath, result)
                 return result
 
             order_calc = calculate_order_size(
@@ -103,7 +114,7 @@ class TradingSimulation:
             order_usdc = min(order_calc.final_amount, self.cash)
             if order_usdc <= 0:
                 result = self._snapshot_result(timestamp, market, asset, side, 'skipped', order_calc.reasoning, trade_size_usdc, 0, best_ask, best_bid, best_ask)
-                self._write_result(result)
+                self._write_result(filepath, result)
                 return result
 
             quantity = order_usdc / best_ask
@@ -113,19 +124,19 @@ class TradingSimulation:
             self.cash -= order_usdc
 
             result = self._snapshot_result(timestamp, market, asset, side, 'simulated', 'buy simulated', trade_size_usdc, order_usdc, best_ask, best_bid, best_ask, quantity)
-            self._write_result(result)
+            self._write_result(filepath, result)
             return result
 
         # SELL simulation
         if best_bid <= 0:
             result = self._snapshot_result(timestamp, market, asset, side, 'skipped', 'no bids', trade_size_usdc, 0, 0, best_bid, best_ask)
-            self._write_result(result)
+            self._write_result(filepath, result)
             return result
 
         position = self.positions.get(asset, SimPosition())
         if position.quantity <= 0:
             result = self._snapshot_result(timestamp, market, asset, side, 'skipped', 'no open position', trade_size_usdc, 0, best_bid, best_bid, best_ask)
-            self._write_result(result)
+            self._write_result(filepath, result)
             return result
 
         requested_qty = trade_size_usdc / best_bid if trade_size_usdc > 0 else position.quantity
@@ -147,7 +158,7 @@ class TradingSimulation:
         self.cash += order_usdc
 
         result = self._snapshot_result(timestamp, market, asset, side, 'simulated', 'sell simulated', trade_size_usdc, order_usdc, best_bid, best_bid, best_ask, quantity)
-        self._write_result(result)
+        self._write_result(filepath, result)
         return result
 
     def _balances(self) -> tuple[float, float, float]:
@@ -200,8 +211,8 @@ class TradingSimulation:
             'loss_carry': round(self.loss_carry, 8),
         }
 
-    def _write_result(self, result: Dict[str, Any]) -> None:
-        with self.filepath.open('a', newline='', encoding='utf-8') as handle:
+    def _write_result(self, filepath: Path, result: Dict[str, Any]) -> None:
+        with filepath.open('a', newline='', encoding='utf-8') as handle:
             writer = csv.writer(handle)
             writer.writerow([
                 result['timestamp'],
@@ -235,5 +246,5 @@ if SIMULATION.enabled:
     warning(
         f'TRADING_SIMULATION enabled. Live orders are disabled. '
         f'Starting virtual balance=${SIMULATION.starting_balance:.2f}, '
-        f'output={SIMULATION.filepath}'
+        f'output={SIMULATION.base_filepath}_[trader_address]'
     )
