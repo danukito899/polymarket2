@@ -5,6 +5,7 @@ import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspa
 import asyncio
 import signal
 import sys
+import threading
 from src.config.db import connect_db, close_db
 from src.config.env import ENV
 from src.utils.create_clob_client import create_clob_client
@@ -17,6 +18,11 @@ from src.utils.system_status import check_system_status, display_system_status
 # Global shutdown flag
 is_shutting_down = False
 shutdown_event = None
+
+
+def _run_winnings_recovery_worker() -> None:
+    """Run winnings recovery in a dedicated thread/event loop."""
+    asyncio.run(winnings_recovery_loop())
 
 
 def signal_handler(signum=None, frame=None):
@@ -99,7 +105,12 @@ async def main():
         executor_task = asyncio.create_task(trade_executor(clob_client))
 
         info('Starting winnings recovery...')
-        recovery_task = asyncio.create_task(winnings_recovery_loop())
+        recovery_thread = threading.Thread(
+            target=_run_winnings_recovery_worker,
+            name='winnings-recovery-thread',
+            daemon=True,
+        )
+        recovery_thread.start()
         
         # Wait for shutdown event
         await shutdown_event.wait()
@@ -108,9 +119,9 @@ async def main():
         if shutdown_event.is_set():
             monitor_task.cancel()
             executor_task.cancel()
-            recovery_task.cancel()
-            await asyncio.gather(monitor_task, executor_task, recovery_task, return_exceptions=True)  # Wait for tasks to finish cancelling
+            await asyncio.gather(monitor_task, executor_task, return_exceptions=True)  # Wait for tasks to finish cancelling
             await graceful_shutdown()
+            recovery_thread.join(timeout=3)
         
     except KeyboardInterrupt:
         await graceful_shutdown()
