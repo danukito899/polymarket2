@@ -34,6 +34,10 @@ position_update_task: Optional[asyncio.Task] = None
 is_first_run = True
 
 
+class WebSocketRotationReconnect(Exception):
+    """Expected reconnect trigger used during periodic WebSocket rotation."""
+
+
 async def init():
     """Initialize monitor"""
     counts = []
@@ -296,7 +300,7 @@ async def connect_rtds():
 
             if rotation_timer.done():
                 info('Restarting RTDS WebSocket after 5 minutes to avoid stale stream')
-                raise RuntimeError('RTDS rotation interval reached')
+                raise WebSocketRotationReconnect('RTDS rotation interval reached')
             
             try:
                 if not message or not str(message).strip():
@@ -332,6 +336,10 @@ async def connect_rtds():
             except Exception as e:
                 error(f'Error processing RTDS message: {e}')
                 
+    except WebSocketRotationReconnect:
+        if ws:
+            await ws.close()
+        raise
     except Exception as e:
         error(f'RTDS WebSocket error: {e}')
         if ws:
@@ -354,6 +362,10 @@ async def reconnect_loop():
             reconnect_attempts = 0
             if is_running:
                 info('RTDS connection ended. Reconnecting...')
+        except WebSocketRotationReconnect:
+            reconnect_attempts = 0
+            if is_running:
+                info('RTDS rotation complete. Reconnecting immediately...')
         except Exception as e:
             reconnect_attempts += 1
             if reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
