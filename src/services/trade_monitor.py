@@ -353,8 +353,8 @@ async def connect_rtds():
 async def reconnect_loop():
     """Handle reconnection logic"""
     global reconnect_attempts, ws
-    
-    while is_running and reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
+
+    while is_running:
         try:
             await backfill_recent_trades()
             await connect_rtds()
@@ -368,12 +368,20 @@ async def reconnect_loop():
                 info('RTDS rotation complete. Reconnecting immediately...')
         except Exception as e:
             reconnect_attempts += 1
-            if reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
-                delay = RECONNECT_DELAY * min(reconnect_attempts, 5)  # Max 25 seconds
-                info(f'Reconnecting to RTDS in {delay}s (attempt {reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS})...')
-                await asyncio.sleep(delay)
-            else:
-                error(f'Max reconnection attempts ({MAX_RECONNECT_ATTEMPTS}) reached. Please restart the bot.')
+            delay = RECONNECT_DELAY * min(reconnect_attempts, 6)  # Max 30 seconds
+            warning(
+                f'RTDS reconnect attempt {reconnect_attempts} failed: {e}. '
+                f'Retrying in {delay}s...'
+            )
+            await asyncio.sleep(delay)
+
+            # Keep reconnecting forever; reset attempt counter after a full cycle.
+            if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
+                warning(
+                    f'RTDS reached {MAX_RECONNECT_ATTEMPTS} consecutive reconnect failures. '
+                    'Continuing retry cycle...'
+                )
+                reconnect_attempts = 0
 
 
 def stop_trade_monitor():
@@ -415,26 +423,26 @@ async def trade_monitor():
         is_first_run = False
         success('\nHistorical trades processed. Now monitoring for new trades only.')
     
+    # Start position updates before entering the (long-running) reconnect loop
+    async def update_positions_periodically():
+        while is_running:
+            await asyncio.sleep(30)
+            if is_running:
+                await update_positions()
+
+    position_update_task = asyncio.create_task(update_positions_periodically())
+
     # Connect to RTDS
     try:
         await reconnect_loop()
-        
-        # Update positions periodically (every 30 seconds)
-        async def update_positions_periodically():
-            while is_running:
-                await asyncio.sleep(30)
-                if is_running:
-                    await update_positions()
-        
-        position_update_task = asyncio.create_task(update_positions_periodically())
-        
-        # Keep the process alive
-        while is_running:
-            await asyncio.sleep(1)
-            
+
     except Exception as e:
         error(f'Failed to connect to RTDS: {e}')
         error('Falling back to HTTP polling is not implemented. Please check your connection.')
         raise
+    finally:
+        if position_update_task:
+            position_update_task.cancel()
+            position_update_task = None
     
     info('Trade monitor stopped')

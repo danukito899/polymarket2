@@ -194,7 +194,11 @@ def waiting(trader_count: int, extra_info: Optional[str] = None) -> None:
     if extra_info:
         message += f' ({extra_info})'
     
-    print(f'{Style.DIM}[{timestamp}]{Style.RESET_ALL} {Fore.CYAN}►{Style.RESET_ALL} {message}', end='\r')
+    line = f'{Style.DIM}[{timestamp}]{Style.RESET_ALL} {Fore.CYAN}►{Style.RESET_ALL} {message}'
+    if sys.stdout.isatty():
+        print(line, end='\r')
+    else:
+        print(line)
     sys.stdout.flush()
 
 
