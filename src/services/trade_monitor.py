@@ -3,7 +3,9 @@ Trade monitor service - monitors trader activity via WebSocket
 """
 import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))); import src.lib_core
 import asyncio
+import contextlib
 import json
+import time
 import websockets
 from typing import List, Dict, Any, Optional
 from ..config.env import ENV
@@ -28,6 +30,7 @@ reconnect_attempts = 0
 MAX_RECONNECT_ATTEMPTS = 10
 RECONNECT_DELAY = 5  # 5 seconds
 WS_ROTATION_SECONDS = 300  # Restart WebSocket every 5 minutes to avoid stale streams
+WS_MESSAGE_TIMEOUT_SECONDS = 15
 TRADE_BACKFILL_LIMIT = 200
 is_running = True
 position_update_task: Optional[asyncio.Task] = None
@@ -270,7 +273,12 @@ async def connect_rtds():
         
         # Connect with timeout
         ws = await asyncio.wait_for(
-            websockets.connect(RTDS_URL),
+            websockets.connect(
+                RTDS_URL,
+                ping_interval=20,
+                ping_timeout=20,
+                close_timeout=10,
+            ),
             timeout=30.0  # 30 second timeout
         )
         success('RTDS WebSocket connected')
@@ -291,16 +299,27 @@ async def connect_rtds():
         await ws.send(json.dumps(subscribe_message))
         success(f'Subscribed to RTDS for {len(USER_ADDRESSES)} trader(s) - monitoring in real-time')
         
-        rotation_timer = asyncio.create_task(asyncio.sleep(WS_ROTATION_SECONDS))
+        rotation_deadline = time.monotonic() + WS_ROTATION_SECONDS
 
         # Listen for messages
-        async for message in ws:
+        while is_running:
             if not is_running:
                 break
 
-            if rotation_timer.done():
+            if time.monotonic() >= rotation_deadline:
                 info('Restarting RTDS WebSocket after 5 minutes to avoid stale stream')
                 raise WebSocketRotationReconnect('RTDS rotation interval reached')
+
+            try:
+                message = await asyncio.wait_for(ws.recv(), timeout=WS_MESSAGE_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                # No frames for a while can indicate stale connection; actively ping.
+                pong_waiter = await ws.ping()
+                await asyncio.wait_for(pong_waiter, timeout=10)
+                continue
+            except websockets.ConnectionClosed:
+                info('RTDS socket closed by server. Reconnecting...')
+                break
             
             try:
                 if not message or not str(message).strip():
@@ -346,8 +365,9 @@ async def connect_rtds():
             await ws.close()
         raise
     finally:
-        if 'rotation_timer' in locals():
-            rotation_timer.cancel()
+        if ws:
+            with contextlib.suppress(Exception):
+                await ws.close()
 
 
 async def reconnect_loop():
