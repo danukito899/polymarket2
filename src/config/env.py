@@ -105,6 +105,12 @@ def validate_numeric_config() -> None:
             f'Invalid MARKET_FALLBACK_MAX_DIFF: {os.getenv("MARKET_FALLBACK_MAX_DIFF")}. Must be between 0 and 1.'
         )
 
+    simulation_total_balance = float(os.getenv('SIMULATION_TOTAL_BALANCE', '1000'))
+    if simulation_total_balance <= 0:
+        raise ValueError(
+            f'Invalid SIMULATION_TOTAL_BALANCE: {os.getenv("SIMULATION_TOTAL_BALANCE")}. Must be greater than 0.'
+        )
+
 
 def validate_urls() -> None:
     """Validate URL formats"""
@@ -304,6 +310,9 @@ class ENV:
     REQUEST_TIMEOUT_MS: int = int(os.getenv('REQUEST_TIMEOUT_MS', '10000'))
     NETWORK_RETRY_LIMIT: int = int(os.getenv('NETWORK_RETRY_LIMIT', '3'))
     HTTP_TRACE_LOGS: bool = os.getenv('HTTP_TRACE_LOGS', 'true').lower() == 'true'
+    TRADING_SIMULATION: bool = os.getenv('TRADING_SIMULATION', 'N').strip().upper() == 'Y'
+    SIMULATION_TOTAL_BALANCE: float = float(os.getenv('SIMULATION_TOTAL_BALANCE', '1000'))
+    SIMULATION_RESULTS_FILE: str = os.getenv('SIMULATION_RESULTS_FILE', 'strategy_factory_results/trading_simulation.csv')
     # Trade aggregation settings
     TRADE_AGGREGATION_ENABLED: bool = os.getenv('TRADE_AGGREGATION_ENABLED', '').lower() == 'true'
     TRADE_AGGREGATION_WINDOW_SECONDS: int = int(os.getenv('TRADE_AGGREGATION_WINDOW_SECONDS', '300'))  # 5 minutes default
