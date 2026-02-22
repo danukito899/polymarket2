@@ -136,7 +136,7 @@ Create a `.env` file with the following configuration:
 | `FETCH_INTERVAL` | Polling interval (seconds) | `1` |
 | `TRADING_SIMULATION` | `Y` = simulate and do not submit live orders | `Y` or `N` |
 | `SIMULATION_TOTAL_BALANCE` | Virtual account size used in simulation mode | `1000` |
-| `SIMULATION_RESULTS_FILE` | Base CSV path; final file is suffixed per trader wallet | `strategy_factory_results/trading_simulation.csv` |
+| `SIMULATION_RESULTS_FILE` | CSV output path for simulation trades | `strategy_factory_results/trading_simulation.csv` |
 
 ### Finding Target Wallets
 
