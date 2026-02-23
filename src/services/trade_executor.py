@@ -12,6 +12,7 @@ from ..utils.fetch_data import fetch_data_async
 from ..utils.get_my_balance import get_my_balance_async
 from ..utils.post_order import post_order
 from ..services.trading_simulation import SIMULATION
+from ..services.trade_monitor import request_trade_monitor_restart
 from ..utils.logger import (
     success, info, warning, header, waiting, clear_line, separator, trade as log_trade, balance as log_balance
 )
@@ -312,6 +313,8 @@ async def trade_executor(clob_client: Any) -> None:
         )
     
     last_check = time.time()
+    waiting_started_at: Optional[float] = None
+    monitor_restart_triggered = False
     
     while is_running:
         trades = await read_temp_trades()
@@ -319,6 +322,8 @@ async def trade_executor(clob_client: Any) -> None:
         if TRADE_AGGREGATION_ENABLED:
             # Process with aggregation logic
             if trades:
+                waiting_started_at = None
+                monitor_restart_triggered = False
                 clear_line()
                 info(f'{len(trades)} new trade{"s" if len(trades) > 1 else ""} detected')
                 
@@ -342,6 +347,8 @@ async def trade_executor(clob_client: Any) -> None:
             # Check for ready aggregated trades
             ready_aggregations = get_ready_aggregated_trades()
             if ready_aggregations:
+                waiting_started_at = None
+                monitor_restart_triggered = False
                 clear_line()
                 header(
                     f"{len(ready_aggregations)} AGGREGATED TRADE{'S' if len(ready_aggregations) > 1 else ''} READY"
@@ -351,6 +358,9 @@ async def trade_executor(clob_client: Any) -> None:
             
             # Update waiting message
             if not trades and not ready_aggregations:
+                if waiting_started_at is None:
+                    waiting_started_at = time.time()
+
                 if time.time() - last_check > FETCH_INTERVAL:
                     buffered_count = len(trade_aggregation_buffer)
                     if buffered_count > 0:
@@ -358,18 +368,33 @@ async def trade_executor(clob_client: Any) -> None:
                     else:
                         waiting(len(USER_ADDRESSES))
                     last_check = time.time()
+
+                if not monitor_restart_triggered and waiting_started_at and (time.time() - waiting_started_at) > 5:
+                    warning('Waiting state exceeded 5 seconds, restarting monitor completely...')
+                    request_trade_monitor_restart('Trade executor watchdog triggered')
+                    monitor_restart_triggered = True
         else:
             # Original non-aggregation logic
             if trades:
+                waiting_started_at = None
+                monitor_restart_triggered = False
                 clear_line()
                 header(f'{len(trades)} NEW TRADE{"S" if len(trades) > 1 else ""} TO COPY')
                 await do_trading(clob_client, trades)
                 last_check = time.time()
             else:
+                if waiting_started_at is None:
+                    waiting_started_at = time.time()
+
                 # Update waiting message on configured fetch interval
                 if time.time() - last_check > FETCH_INTERVAL:
                     waiting(len(USER_ADDRESSES))
                     last_check = time.time()
+
+                if not monitor_restart_triggered and waiting_started_at and (time.time() - waiting_started_at) > 5:
+                    warning('Waiting state exceeded 5 seconds, restarting monitor completely...')
+                    request_trade_monitor_restart('Trade executor watchdog triggered')
+                    monitor_restart_triggered = True
         
         if not is_running:
             break

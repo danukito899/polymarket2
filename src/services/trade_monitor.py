@@ -33,12 +33,22 @@ WS_ROTATION_SECONDS = 300  # Restart WebSocket every 5 minutes to avoid stale st
 WS_MESSAGE_TIMEOUT_SECONDS = 15
 TRADE_BACKFILL_LIMIT = 200
 is_running = True
+restart_requested = False
 position_update_task: Optional[asyncio.Task] = None
 is_first_run = True
 
 
 class WebSocketRotationReconnect(Exception):
     """Expected reconnect trigger used during periodic WebSocket rotation."""
+
+
+def request_trade_monitor_restart(reason: str = 'Restart requested') -> None:
+    """Request a full monitor reconnect on the next loop iteration."""
+    global restart_requested, ws
+    restart_requested = True
+    info(f'{reason}. Restarting trade monitor connection...')
+    if ws:
+        asyncio.create_task(ws.close())
 
 
 async def init():
@@ -266,7 +276,7 @@ async def backfill_recent_trades() -> None:
 
 async def connect_rtds():
     """Connect to RTDS WebSocket and subscribe to trader activities"""
-    global ws, reconnect_attempts
+    global ws, reconnect_attempts, restart_requested
     
     try:
         info(f'Connecting to RTDS at {RTDS_URL}...')
@@ -305,6 +315,9 @@ async def connect_rtds():
         while is_running:
             if not is_running:
                 break
+
+            if restart_requested:
+                raise WebSocketRotationReconnect('Manual monitor restart requested')
 
             if time.monotonic() >= rotation_deadline:
                 info('Restarting RTDS WebSocket after 5 minutes to avoid stale stream')
@@ -372,7 +385,7 @@ async def connect_rtds():
 
 async def reconnect_loop():
     """Handle reconnection logic"""
-    global reconnect_attempts, ws
+    global reconnect_attempts, ws, restart_requested
     
     while is_running and reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
         try:
@@ -384,8 +397,9 @@ async def reconnect_loop():
                 info('RTDS connection ended. Reconnecting...')
         except WebSocketRotationReconnect:
             reconnect_attempts = 0
+            restart_requested = False
             if is_running:
-                info('RTDS rotation complete. Reconnecting immediately...')
+                info('RTDS connection restart complete. Reconnecting immediately...')
         except Exception as e:
             reconnect_attempts += 1
             if reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
