@@ -18,8 +18,9 @@ def is_valid_ethereum_address(address: str) -> bool:
 
 def validate_required_env() -> None:
     """Validate required environment variables"""
+    own_trading_strategy_enabled = os.getenv('OWN_TRADING_STRATEGY', 'N').strip().upper() == 'Y'
+
     required = [
-        'USER_ADDRESSES',
         'PRIVATE_KEY',
         'CLOB_HTTP_URL',
         'CLOB_WS_URL',
@@ -27,6 +28,9 @@ def validate_required_env() -> None:
         'RPC_URL',
         'USDC_CONTRACT_ADDRESS',
     ]
+
+    if not own_trading_strategy_enabled:
+        required.append('USER_ADDRESSES')
 
     missing = [key for key in required if not os.getenv(key)]
 
@@ -109,6 +113,24 @@ def validate_numeric_config() -> None:
     if simulation_total_balance <= 0:
         raise ValueError(
             f'Invalid SIMULATION_TOTAL_BALANCE: {os.getenv("SIMULATION_TOTAL_BALANCE")}. Must be greater than 0.'
+        )
+
+    own_strategy_min_probability = float(os.getenv('OWN_STRATEGY_MIN_PROBABILITY', '0.87'))
+    if own_strategy_min_probability <= 0 or own_strategy_min_probability > 1:
+        raise ValueError(
+            f'Invalid OWN_STRATEGY_MIN_PROBABILITY: {os.getenv("OWN_STRATEGY_MIN_PROBABILITY")}. Must be in (0, 1].'
+        )
+
+    own_strategy_order_size = float(os.getenv('OWN_STRATEGY_ORDER_SIZE_USD', '100'))
+    if own_strategy_order_size < 1:
+        raise ValueError(
+            f'Invalid OWN_STRATEGY_ORDER_SIZE_USD: {os.getenv("OWN_STRATEGY_ORDER_SIZE_USD")}. Must be at least 1.'
+        )
+
+    own_strategy_last_seconds = int(os.getenv('OWN_STRATEGY_LAST_SECONDS', '50'))
+    if own_strategy_last_seconds < 1:
+        raise ValueError(
+            f'Invalid OWN_STRATEGY_LAST_SECONDS: {os.getenv("OWN_STRATEGY_LAST_SECONDS")}. Must be positive.'
         )
 
 
@@ -317,6 +339,10 @@ class ENV:
     TRADE_AGGREGATION_ENABLED: bool = os.getenv('TRADE_AGGREGATION_ENABLED', '').lower() == 'true'
     TRADE_AGGREGATION_WINDOW_SECONDS: int = int(os.getenv('TRADE_AGGREGATION_WINDOW_SECONDS', '300'))  # 5 minutes default
     MARKET_FALLBACK_MAX_DIFF: float = float(os.getenv('MARKET_FALLBACK_MAX_DIFF', '0.02'))
+    OWN_TRADING_STRATEGY: bool = os.getenv('OWN_TRADING_STRATEGY', 'N').strip().upper() == 'Y'
+    OWN_STRATEGY_MIN_PROBABILITY: float = float(os.getenv('OWN_STRATEGY_MIN_PROBABILITY', '0.87'))
+    OWN_STRATEGY_ORDER_SIZE_USD: float = float(os.getenv('OWN_STRATEGY_ORDER_SIZE_USD', '100'))
+    OWN_STRATEGY_LAST_SECONDS: int = int(os.getenv('OWN_STRATEGY_LAST_SECONDS', '50'))
     MONGO_URI: str = os.getenv('MONGO_URI', '')
     RPC_URL: str = os.getenv('RPC_URL', '')
     USDC_CONTRACT_ADDRESS: str = os.getenv('USDC_CONTRACT_ADDRESS', '')

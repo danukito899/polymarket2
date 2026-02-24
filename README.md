@@ -137,6 +137,16 @@ Create a `.env` file with the following configuration:
 | `TRADING_SIMULATION` | `Y` = simulate and do not submit live orders | `Y` or `N` |
 | `SIMULATION_TOTAL_BALANCE` | Virtual account size used in simulation mode | `1000` |
 | `SIMULATION_RESULTS_FILE` | CSV output path for simulation trades | `strategy_factory_results/trading_simulation.csv` |
+| `OWN_TRADING_STRATEGY` | `Y` = enable independent BTC 5-minute strategy (no copy trading) | `Y` or `N` |
+| `OWN_STRATEGY_MIN_PROBABILITY` | Trigger threshold for BTC 5-minute outcome probability | `0.87` |
+| `OWN_STRATEGY_ORDER_SIZE_USD` | Fixed order size when strategy triggers | `100` |
+| `OWN_STRATEGY_LAST_SECONDS` | Only trade when market has this many seconds left or less | `50` |
+
+> Note: when `OWN_TRADING_STRATEGY=Y`, the bot runs the independent BTC 5-minute strategy and `USER_ADDRESSES` is not required.
+
+Own 5-minute strategy market connection:
+- Market discovery: `https://gamma-api.polymarket.com/markets` (active/open markets metadata).
+- Execution pricing + order placement: configured CLOB client (`CLOB_HTTP_URL`) orderbook + order submission.
 
 ### Finding Target Wallets
 
