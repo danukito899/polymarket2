@@ -191,6 +191,13 @@ Your `.env` file contains all configuration. Here's what each variable does:
 | `FETCH_INTERVAL` | Check interval (seconds) | `1` |
 | `TRADE_AGGREGATION_ENABLED` | Enable aggregation | `false` |
 | `TRADE_AGGREGATION_WINDOW_SECONDS` | Aggregation window | `30` |
+| `OWN_TRADING_STRATEGY` | Enable independent BTC minute strategy (`Y`/`N`) | `N` |
+| `OWN_STRATEGY_MIN_PROBABILITY` | Trigger threshold probability | `0.87` |
+| `OWN_STRATEGY_ORDER_SIZE_USD` | Fixed order size in USD | `100` |
+| `OWN_STRATEGY_LAST_SECONDS` | Only trade in final seconds | `50` |
+| `OWN_STRATEGY_SCAN_INTERVAL_SECONDS` | Scan interval in seconds | `2` |
+
+If `OWN_TRADING_STRATEGY=Y`, the bot runs the independent BTC minute strategy and does not require `USER_ADDRESSES`.
 
 ### Editing Configuration
 
@@ -439,4 +446,3 @@ python -m src.scripts.setup.system_status
 - Only trade what you can afford to lose
 - Keep your private key secure
 - Research traders before copying
-
