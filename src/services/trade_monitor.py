@@ -21,7 +21,7 @@ USER_ADDRESSES = ENV.USER_ADDRESSES
 TOO_OLD_TIMESTAMP = ENV.TOO_OLD_TIMESTAMP
 RTDS_URL = 'wss://ws-live-data.polymarket.com'
 
-if not USER_ADDRESSES or len(USER_ADDRESSES) == 0:
+if (not USER_ADDRESSES or len(USER_ADDRESSES) == 0) and not ENV.OWN_TRADING_STRATEGY:
     raise ValueError('USER_ADDRESSES is not defined or empty')
 
 # WebSocket connection state

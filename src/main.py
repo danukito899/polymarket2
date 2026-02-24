@@ -11,6 +11,7 @@ from src.config.env import ENV
 from src.utils.create_clob_client import create_clob_client
 from src.services.trade_executor import trade_executor, stop_trade_executor
 from src.services.trade_monitor import trade_monitor, stop_trade_monitor
+from src.services.own_trading_strategy import own_trading_strategy_loop, stop_own_trading_strategy
 from src.services.winnings_recovery import winnings_recovery_loop, stop_winnings_recovery
 from src.utils.logger import startup, info, success, warning, error, separator
 from src.utils.system_status import check_system_status, display_system_status
@@ -48,6 +49,7 @@ async def graceful_shutdown():
         # Stop services
         stop_trade_monitor()
         stop_trade_executor()
+        stop_own_trading_strategy()
         stop_winnings_recovery()
         
         # Give services time to finish current operations
@@ -96,13 +98,18 @@ async def main():
         success('CLOB client ready')
         
         separator()
-        info('Starting trade monitor...')
-        # Start trade monitor in background
-        monitor_task = asyncio.create_task(trade_monitor())
-        
-        info('Starting trade executor...')
-        # Start trade executor in background
-        executor_task = asyncio.create_task(trade_executor(clob_client))
+        if ENV.OWN_TRADING_STRATEGY:
+            info('Starting own trading strategy...')
+            monitor_task = asyncio.create_task(own_trading_strategy_loop(clob_client))
+            executor_task = asyncio.create_task(asyncio.sleep(float('inf')))
+        else:
+            info('Starting trade monitor...')
+            # Start trade monitor in background
+            monitor_task = asyncio.create_task(trade_monitor())
+
+            info('Starting trade executor...')
+            # Start trade executor in background
+            executor_task = asyncio.create_task(trade_executor(clob_client))
 
         info('Starting winnings recovery...')
         recovery_thread = threading.Thread(
