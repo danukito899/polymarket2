@@ -11,8 +11,8 @@ from ..utils.get_my_balance import get_my_balance_async
 from ..utils.logger import info, warning, success, error
 from ..utils.post_order import submit_with_fok_then_market
 
-# No dedicated env var for scan cadence: reuse bot fetch interval with a sane floor.
-SCAN_INTERVAL_SECONDS = max(float(ENV.FETCH_INTERVAL), 1.0)
+# Keep cadence fixed at 1s so we can verify live pricing every second.
+SCAN_INTERVAL_SECONDS = 1.0
 GAMMA_MARKETS_URL = (
     'https://gamma-api.polymarket.com/markets?active=true&closed=false&'
     'limit=500&order=endDate&ascending=true'
@@ -124,6 +124,58 @@ def _select_market_candidate(markets: List[Dict[str, Any]]) -> Optional[Tuple[Di
     return None
 
 
+def _select_market_for_price_log(markets: List[Dict[str, Any]]) -> Optional[Tuple[Dict[str, Any], int, float, int]]:
+    """Pick the most relevant BTC 5-minute market for logging live buy/sell prices."""
+    now = _now_utc()
+    best_choice: Optional[Tuple[Dict[str, Any], int, float, int]] = None
+
+    for market in markets:
+        if not _is_btc_five_minute_market(market):
+            continue
+
+        end_at = _parse_end_time(market.get('endDate'))
+        if not end_at:
+            continue
+
+        seconds_left = int((end_at - now).total_seconds())
+        if seconds_left <= 0:
+            continue
+
+        probabilities = _extract_probabilities(market)
+        token_ids = _extract_token_ids(market)
+        if not probabilities or not token_ids:
+            continue
+
+        best_index = max(range(len(probabilities)), key=lambda idx: probabilities[idx])
+        if best_index >= len(token_ids):
+            continue
+
+        best_prob = probabilities[best_index]
+        if best_choice is None or seconds_left < best_choice[3]:
+            best_choice = (market, best_index, best_prob, seconds_left)
+
+    return best_choice
+
+
+async def _log_market_prices(clob_client: Any, market: Dict[str, Any], token_id: str, probability: float, seconds_left: int) -> None:
+    """Log executable buy/sell prices in cents with timestamp for debugging."""
+    order_book = await clob_client.get_order_book(token_id)
+    bids = order_book.get('bids') or []
+    asks = order_book.get('asks') or []
+
+    best_bid = max((float(level['price']) for level in bids), default=0.0)
+    best_ask = min((float(level['price']) for level in asks), default=0.0)
+    bid_cents = best_bid * 100
+    ask_cents = best_ask * 100
+
+    market_name = market.get('question') or market.get('slug') or 'BTC 5-minute market'
+    timestamp = _now_utc().isoformat(timespec='seconds')
+    info(
+        f'[{timestamp}] BTC-5m quotes | buy={ask_cents:.2f}c | sell={bid_cents:.2f}c '
+        f'| prob={probability:.4f} | seconds_left={seconds_left} | market={market_name}'
+    )
+
+
 async def _fetch_btc_5m_markets() -> List[Dict[str, Any]]:
     """Load active markets from Gamma for BTC 5-minute discovery.
 
@@ -208,6 +260,19 @@ async def own_trading_strategy_loop(clob_client: Any) -> None:
     while is_running:
         try:
             markets = await _fetch_btc_5m_markets()
+            log_market = _select_market_for_price_log(markets)
+            if log_market:
+                market, outcome_index, probability, seconds_left = log_market
+                token_ids = _extract_token_ids(market)
+                if outcome_index < len(token_ids):
+                    await _log_market_prices(
+                        clob_client=clob_client,
+                        market=market,
+                        token_id=token_ids[outcome_index],
+                        probability=probability,
+                        seconds_left=seconds_left,
+                    )
+
             candidate = _select_market_candidate(markets)
 
             if candidate:
