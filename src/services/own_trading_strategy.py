@@ -1,4 +1,4 @@
-"""Independent own trading strategy for BTC minute markets."""
+"""Independent own trading strategy for Polymarket BTC 5-minute markets."""
 import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))); import src.lib_core
 import asyncio
 from datetime import datetime, timezone
@@ -10,6 +10,13 @@ from ..utils.fetch_data import fetch_data_async
 from ..utils.get_my_balance import get_my_balance_async
 from ..utils.logger import info, warning, success, error
 from ..utils.post_order import submit_with_fok_then_market
+
+# No dedicated env var for scan cadence: reuse bot fetch interval with a sane floor.
+SCAN_INTERVAL_SECONDS = max(float(ENV.FETCH_INTERVAL), 1.0)
+GAMMA_MARKETS_URL = (
+    'https://gamma-api.polymarket.com/markets?active=true&closed=false&'
+    'limit=500&order=endDate&ascending=true'
+)
 
 is_running = True
 executed_markets: set[str] = set()
@@ -61,16 +68,32 @@ def _extract_token_ids(market: Dict[str, Any]) -> List[str]:
     return []
 
 
+def _is_btc_five_minute_market(market: Dict[str, Any]) -> bool:
+    searchable = ' '.join([
+        str(market.get('question', '')).lower(),
+        str(market.get('title', '')).lower(),
+        str(market.get('slug', '')).lower(),
+        str(market.get('eventSlug', '')).lower(),
+    ])
+
+    is_btc = 'bitcoin' in searchable or 'btc' in searchable
+    is_5m = (
+        '5 minute' in searchable
+        or '5-minute' in searchable
+        or '5 min' in searchable
+        or '5m' in searchable
+        or 'in 5 minutes' in searchable
+        or 'up or down in 5 minutes' in searchable
+    )
+    return is_btc and is_5m
+
+
 def _select_market_candidate(markets: List[Dict[str, Any]]) -> Optional[Tuple[Dict[str, Any], int, float, int]]:
     now = _now_utc()
     threshold = ENV.OWN_STRATEGY_MIN_PROBABILITY
 
     for market in markets:
-        question = str(market.get('question', '')).lower()
-        title = str(market.get('title', '')).lower()
-        slug = str(market.get('slug', '')).lower()
-
-        if 'bitcoin' not in f'{question} {title} {slug}' or 'minute' not in f'{question} {title} {slug}':
+        if not _is_btc_five_minute_market(market):
             continue
 
         market_id = str(market.get('conditionId') or market.get('id') or market.get('slug') or '')
@@ -101,13 +124,14 @@ def _select_market_candidate(markets: List[Dict[str, Any]]) -> Optional[Tuple[Di
     return None
 
 
-async def _fetch_btc_minute_markets() -> List[Dict[str, Any]]:
-    # Gamma API provides market metadata including token IDs and probabilities.
-    markets_url = (
-        'https://gamma-api.polymarket.com/markets?active=true&closed=false&'
-        'limit=200&order=volume&ascending=false'
-    )
-    data = await fetch_data_async(markets_url)
+async def _fetch_btc_5m_markets() -> List[Dict[str, Any]]:
+    """Load active markets from Gamma for BTC 5-minute discovery.
+
+    Integration path:
+    1) Gamma API provides the active market metadata + outcome token ids.
+    2) CLOB orderbook lookup provides the executable best ask for the selected token.
+    """
+    data = await fetch_data_async(GAMMA_MARKETS_URL)
     return data if isinstance(data, list) else []
 
 
@@ -126,10 +150,10 @@ async def _execute_own_buy(clob_client: Any, token_id: str, market: Dict[str, An
 
     order_usd = ENV.OWN_STRATEGY_ORDER_SIZE_USD
     amount = order_usd / ask_price
-    market_name = market.get('question') or market.get('slug') or 'BTC minute market'
+    market_name = market.get('question') or market.get('slug') or 'BTC 5-minute market'
 
     info(
-        f'Own strategy trigger: prob={probability:.4f}, price={ask_price:.4f}, '
+        f'Own strategy trigger (BTC-5m): prob={probability:.4f}, price={ask_price:.4f}, '
         f'order=${order_usd:.2f}, market={market_name}'
     )
 
@@ -179,11 +203,11 @@ async def _execute_own_buy(clob_client: Any, token_id: str, market: Dict[str, An
 
 
 async def own_trading_strategy_loop(clob_client: Any) -> None:
-    """Poll BTC minute markets and execute configured strategy when conditions are met."""
-    success('Own trading strategy enabled (independent mode)')
+    """Poll BTC 5-minute markets and execute configured strategy when conditions are met."""
+    success('Own trading strategy enabled (independent BTC 5-minute mode)')
     while is_running:
         try:
-            markets = await _fetch_btc_minute_markets()
+            markets = await _fetch_btc_5m_markets()
             candidate = _select_market_candidate(markets)
 
             if candidate:
@@ -193,18 +217,18 @@ async def own_trading_strategy_loop(clob_client: Any) -> None:
                 market_id = str(market.get('conditionId') or market.get('id') or market.get('slug'))
 
                 info(
-                    f'Candidate market found (seconds_left={seconds_left}, outcome_index={outcome_index}, '
+                    f'Candidate BTC-5m market found (seconds_left={seconds_left}, outcome_index={outcome_index}, '
                     f'probability={probability:.4f})'
                 )
                 await _execute_own_buy(clob_client, token_id, market, probability)
                 executed_markets.add(market_id)
 
-            await asyncio.sleep(ENV.OWN_STRATEGY_SCAN_INTERVAL_SECONDS)
+            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
         except asyncio.CancelledError:
             break
         except Exception as exc:
             error(f'Own strategy loop error: {exc}')
-            await asyncio.sleep(ENV.OWN_STRATEGY_SCAN_INTERVAL_SECONDS)
+            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 
     info('Own trading strategy stopped')
 

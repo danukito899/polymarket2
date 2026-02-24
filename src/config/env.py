@@ -343,7 +343,6 @@ class ENV:
     OWN_STRATEGY_MIN_PROBABILITY: float = float(os.getenv('OWN_STRATEGY_MIN_PROBABILITY', '0.87'))
     OWN_STRATEGY_ORDER_SIZE_USD: float = float(os.getenv('OWN_STRATEGY_ORDER_SIZE_USD', '100'))
     OWN_STRATEGY_LAST_SECONDS: int = int(os.getenv('OWN_STRATEGY_LAST_SECONDS', '50'))
-    OWN_STRATEGY_SCAN_INTERVAL_SECONDS: float = float(os.getenv('OWN_STRATEGY_SCAN_INTERVAL_SECONDS', '2'))
     MONGO_URI: str = os.getenv('MONGO_URI', '')
     RPC_URL: str = os.getenv('RPC_URL', '')
     USDC_CONTRACT_ADDRESS: str = os.getenv('USDC_CONTRACT_ADDRESS', '')

@@ -191,13 +191,16 @@ Your `.env` file contains all configuration. Here's what each variable does:
 | `FETCH_INTERVAL` | Check interval (seconds) | `1` |
 | `TRADE_AGGREGATION_ENABLED` | Enable aggregation | `false` |
 | `TRADE_AGGREGATION_WINDOW_SECONDS` | Aggregation window | `30` |
-| `OWN_TRADING_STRATEGY` | Enable independent BTC minute strategy (`Y`/`N`) | `N` |
+| `OWN_TRADING_STRATEGY` | Enable independent BTC 5-minute strategy (`Y`/`N`) | `N` |
 | `OWN_STRATEGY_MIN_PROBABILITY` | Trigger threshold probability | `0.87` |
 | `OWN_STRATEGY_ORDER_SIZE_USD` | Fixed order size in USD | `100` |
 | `OWN_STRATEGY_LAST_SECONDS` | Only trade in final seconds | `50` |
-| `OWN_STRATEGY_SCAN_INTERVAL_SECONDS` | Scan interval in seconds | `2` |
 
-If `OWN_TRADING_STRATEGY=Y`, the bot runs the independent BTC minute strategy and does not require `USER_ADDRESSES`.
+If `OWN_TRADING_STRATEGY=Y`, the bot runs the independent BTC 5-minute strategy and does not require `USER_ADDRESSES`.
+
+5-minute strategy integration path:
+- Market discovery comes from Gamma `GET /markets` (active/open metadata + token ids).
+- Price/execution uses the configured CLOB client (`CLOB_HTTP_URL`) orderbook + order submission.
 
 ### Editing Configuration
 
