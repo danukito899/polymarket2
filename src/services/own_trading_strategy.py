@@ -20,6 +20,7 @@ GAMMA_MARKETS_URL = (
 
 is_running = True
 executed_markets: set[str] = set()
+has_executed_own_order = False
 
 
 def _now_utc() -> datetime:
@@ -187,18 +188,18 @@ async def _fetch_btc_5m_markets() -> List[Dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
-async def _execute_own_buy(clob_client: Any, token_id: str, market: Dict[str, Any], probability: float) -> None:
+async def _execute_own_buy(clob_client: Any, token_id: str, market: Dict[str, Any], probability: float) -> bool:
     order_book = await clob_client.get_order_book(token_id)
     asks = order_book.get('asks') or []
     if not asks:
         warning(f'No asks available for own strategy token {token_id}, skipping')
-        return
+        return False
 
     best_ask = min(asks, key=lambda level: float(level['price']))
     ask_price = float(best_ask['price'])
     if ask_price <= 0:
         warning(f'Invalid ask price for own strategy token {token_id}, skipping')
-        return
+        return False
 
     order_usd = ENV.OWN_STRATEGY_ORDER_SIZE_USD
     amount = order_usd / ask_price
@@ -212,7 +213,7 @@ async def _execute_own_buy(clob_client: Any, token_id: str, market: Dict[str, An
     my_balance = await get_my_balance_async(ENV.BALANCE_WALLET_ADDRESS)
     if my_balance < order_usd:
         warning(f'Insufficient balance for own strategy (${my_balance:.2f} < ${order_usd:.2f}), skipping')
-        return
+        return False
 
     synthetic_trade = {
         'asset': token_id,
@@ -233,7 +234,7 @@ async def _execute_own_buy(clob_client: Any, token_id: str, market: Dict[str, An
             user_address='own_strategy',
         )
         success('Own strategy simulation completed')
-        return
+        return True
 
     order_args = {
         'side': 'BUY',
@@ -250,15 +251,22 @@ async def _execute_own_buy(clob_client: Any, token_id: str, market: Dict[str, An
 
     if response.get('success'):
         success('Own strategy live BUY order executed')
+        return True
     else:
         warning(f'Own strategy order failed: {response}')
+        return False
 
 
 async def own_trading_strategy_loop(clob_client: Any) -> None:
     """Poll BTC 5-minute markets and execute configured strategy when conditions are met."""
+    global has_executed_own_order
     success('Own trading strategy enabled (independent BTC 5-minute mode)')
     while is_running:
         try:
+            if has_executed_own_order:
+                await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+                continue
+
             markets = await _fetch_btc_5m_markets()
             log_market = _select_market_for_price_log(markets)
             if log_market:
@@ -285,8 +293,11 @@ async def own_trading_strategy_loop(clob_client: Any) -> None:
                     f'Candidate BTC-5m market found (seconds_left={seconds_left}, outcome_index={outcome_index}, '
                     f'probability={probability:.4f})'
                 )
-                await _execute_own_buy(clob_client, token_id, market, probability)
-                executed_markets.add(market_id)
+                order_executed = await _execute_own_buy(clob_client, token_id, market, probability)
+                if order_executed:
+                    executed_markets.add(market_id)
+                    has_executed_own_order = True
+                    success('Own strategy has placed one order; no additional own-strategy orders will be placed this run')
 
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
         except asyncio.CancelledError:
@@ -300,5 +311,6 @@ async def own_trading_strategy_loop(clob_client: Any) -> None:
 
 def stop_own_trading_strategy() -> None:
     """Gracefully stop own strategy loop."""
-    global is_running
+    global is_running, has_executed_own_order
     is_running = False
+    has_executed_own_order = False
